@@ -325,6 +325,8 @@ public class OsrsLoadoutPlugin extends Plugin
 		lastCaptured = items;
 		lastCapturedRsn = rsn;
 
+		say(breakdown());
+
 		// Deliberately skips the unchanged check. Re-sending an identical reading is the entire point: the
 		// player is telling us they do not believe the server has it.
 		upload(rsn, items, true);
@@ -346,19 +348,28 @@ public class OsrsLoadoutPlugin extends Plugin
 			return false;
 		}
 
-		collect(bank, into);
+		lastBreakdown = new int[4];
+		collect(bank, into, 0);
 
 		// Equipment and inventory are included alongside the bank because the question the site is asking is
 		// "what do you own", and a player's best items are usually the ones they are wearing. A bank-only
 		// read would tell the planner you do not own your own gear, which is the one thing it must not get
 		// wrong. It costs nothing: same trigger, same pass, same request.
-		collect(client.getItemContainer(InventoryID.WORN), into);
-		collect(client.getItemContainer(InventoryID.INV), into);
+		collect(client.getItemContainer(InventoryID.WORN), into, 1);
+		collect(client.getItemContainer(InventoryID.INV), into, 2);
 
 		return !into.isEmpty();
 	}
 
-	private void collect(@Nullable ItemContainer container, Map<Integer, Long> into)
+	/**
+	 * How the last read broke down: bank, worn, inventory, and entries skipped because they were empty
+	 * slots or placeholders. Kept because "is it picking up placeholders?" is a question about this
+	 * plugin that nobody - including whoever wrote it - can answer by reading the code with confidence,
+	 * and one line of counts settles it in one bank open.
+	 */
+	private int[] lastBreakdown = new int[4];
+
+	private void collect(@Nullable ItemContainer container, Map<Integer, Long> into, int slot)
 	{
 		if (container == null)
 		{
@@ -375,8 +386,13 @@ public class OsrsLoadoutPlugin extends Plugin
 			// quantity catches this and the empty slots the container reports, in one condition.
 			if (id <= 0 || quantity <= 0 || id == ItemID.BANK_FILLER)
 			{
+				if (id > 0 && id != ItemID.BANK_FILLER)
+				{
+					lastBreakdown[3]++;
+				}
 				continue;
 			}
+			lastBreakdown[slot]++;
 
 			// canonicalize resolves a noted id to its unnoted one, a placeholder to the real item, and the
 			// "worn" variants some equipment has to the base id. Doing this by hand via getNote() and
@@ -390,6 +406,19 @@ public class OsrsLoadoutPlugin extends Plugin
 			// figure would under-report every one of those.
 			into.merge(canonical, (long) quantity, Long::sum);
 		}
+	}
+
+	/**
+	 * Where the last reading came from, in one line. A placeholder is a bank slot holding an item you no
+	 * longer have, stored with a quantity of zero, and it is the first thing anybody suspects when the
+	 * site shows gear they do not own - so the count of what was skipped is said out loud rather than
+	 * left to be argued about.
+	 */
+	private String breakdown()
+	{
+		return "Read " + lastBreakdown[0] + " from the bank, " + lastBreakdown[1] + " worn, "
+			+ lastBreakdown[2] + " in the inventory; ignored " + lastBreakdown[3]
+			+ " placeholders and empty slots.";
 	}
 
 	/**
