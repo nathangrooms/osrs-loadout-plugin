@@ -89,7 +89,7 @@ public interface OsrsLoadoutConfig extends Config
 		description = "Opens the panel where the link code, the sync button and the rest live. It is also "
 			+ "the icon on the toolbar to the right of the screen - this is here because a settings screen "
 			+ "that mentions a panel and cannot take you to it is a dead end.",
-		position = 2
+		position = 3
 	)
 	default boolean openPanel()
 	{

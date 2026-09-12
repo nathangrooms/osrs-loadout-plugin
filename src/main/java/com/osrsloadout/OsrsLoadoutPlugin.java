@@ -79,8 +79,8 @@ import okhttp3.ResponseBody;
 @PluginDescriptor(
 	name = "OSRS Loadout",
 	description = "Sends your bank, worn equipment and inventory to osrsloadout.com when you press "
-		+ "Sync, so the site can plan gear from what you actually own. Uploads item ids, quantities "
-		+ "and your display name to a third-party server.",
+		+ "Sync, so the site can plan gear from what you actually own. Uploads item ids and quantities "
+		+ "to a third-party server, and your display name only if you separately opt in.",
 	tags = {"bank", "gear", "loadout", "sync", "export"}
 )
 public class OsrsLoadoutPlugin extends Plugin
@@ -145,12 +145,16 @@ public class OsrsLoadoutPlugin extends Plugin
 	private SortedMap<Integer, Long> lastCaptured;
 	private String lastCapturedRsn;
 
-	/** These four are written on OkHttp dispatcher threads and read on the client thread and the EDT. */
-	private volatile boolean announced;
-
 	private OsrsLoadoutPanel panel;
 	private NavigationButton navButton;
-	/** What the last successful read found, for the panel to report rather than the player to guess. */
+
+	/**
+	 * These three are volatile because they are written on OkHttp dispatcher threads and read on the client
+	 * thread and the EDT. {@code announced} is the once-per-session guard on the chat line; the other two
+	 * are what the last successful upload contained, for the panel to report rather than the player to
+	 * guess.
+	 */
+	private volatile boolean announced;
 	private volatile String lastSyncAt;
 	private volatile int lastSyncItems;
 
@@ -306,9 +310,11 @@ public class OsrsLoadoutPlugin extends Plugin
 	}
 
 	/**
-	 * The three actions all arrive here. Each is a toggle pretending to be a button, so each puts itself back
-	 * up rather than sitting on and looking like a mode the plugin is now in - and because writing the key
-	 * back re-enters this method, every branch is guarded on the value still being true.
+	 * One key, because the actions live in the panel where a button can be a button. This is the door to
+	 * that panel, and a settings screen has no type that is a button either, so it arrives as a toggle
+	 * pretending to be one: it puts itself straight back up rather than sitting on and looking like a mode
+	 * the plugin is now in. Writing the key back re-enters this method, which is why the branch is guarded
+	 * on the value still being true.
 	 */
 	@Subscribe
 	public void onConfigChanged(ConfigChanged event)
@@ -318,8 +324,6 @@ public class OsrsLoadoutPlugin extends Plugin
 			return;
 		}
 
-		// One thing only. The actions live in the panel, where a button can be a button; this is the
-		// door to it, because a settings screen that mentions a panel and cannot open it is a dead end.
 		if ("openPanel".equals(event.getKey()) && config.openPanel())
 		{
 			configManager.setConfiguration(CONFIG_GROUP, "openPanel", false);
@@ -331,16 +335,15 @@ public class OsrsLoadoutPlugin extends Plugin
 	}
 
 	/**
-	 * Runs on the client thread, as an event handler: ItemManager#canonicalize reaches through to
-	 * Client#getItemDefinition, and the item containers and the local player are live game state, so none of
-	 * it may be touched from anywhere else. Only the request leaves this thread.
-	 */
-	/**
 	 * The manual re-sync, for when the player can see that the site is wrong and changing their bank to force
 	 * an upload would be an absurd thing to have to do.
 	 *
 	 * It re-reads rather than trusting the memo, because the bank may well be open and a few withdrawals
 	 * further on than the last capture. The memo is the fallback, not the source.
+	 *
+	 * Runs on the client thread, because ItemManager#canonicalize reaches through to
+	 * Client#getItemDefinition and the item containers and the local player are live game state, so none of
+	 * it may be touched from anywhere else. Only the request leaves this thread.
 	 */
 	private void resync()
 	{
@@ -739,7 +742,6 @@ public class OsrsLoadoutPlugin extends Plugin
 		final String name = local == null ? null : local.getName();
 		return name == null || name.isEmpty() ? null : name;
 	}
-
 
 	private void forgetUploads()
 	{
