@@ -232,24 +232,58 @@ The first `build` downloads Gradle 8.10 and the RuneLite client jars and takes a
 runs are seconds. `build` also runs the unit tests; `run` builds first, so you can skip straight to it once
 you trust it.
 
-One gotcha that is not this plugin's fault: **if you use a Jagex account, the development client cannot log
-in without extra setup.** RuneLite documents it at
-[Using Jagex Accounts](https://github.com/runelite/runelite/wiki/Using-Jagex-Accounts). Worth reading before
-you sit down to test, rather than after.
+## Testing it in game
 
-### The other way: side-loading into the real client
+The short version: **you cannot test this in the RuneLite you launch from the Jagex Launcher.** Not because
+of anything in this plugin — RuneLite refuses on purpose, and it is worth knowing exactly how, because the
+refusal is silent.
 
-If you would rather test in your normal RuneLite install than in the development client, it side-loads
-plugins from a directory — but only when started in developer mode.
+Side-loading is gated on developer mode (`PluginManager.loadSideLoadPlugins` opens with
+`if (!developerMode) { return; }`), and developer mode is gated on not having been started by the launcher:
 
-1. `.\gradlew.bat build`
-2. Copy `build\libs\osrs-loadout-1.0.0.jar` into `C:\Users\<you>\.runelite\sideloaded-plugins\`, creating
-   the directory if it does not exist. Use the plain jar, not the shadow jar — the shadow jar bundles an
-   entire client.
-3. Start RuneLite with `--developer-mode`. Side-loading is skipped entirely without it.
-4. The plugin appears in the plugin list as "OSRS Loadout".
+```java
+final boolean developerMode = options.has("developer-mode")
+    && RuneLiteProperties.getLauncherVersion() == null;
+```
 
-`.\gradlew.bat run` is the easier loop; this path is for testing against your real account and real bank.
+The launcher always sets that property. So `--developer-mode` typed into **RuneLite (configure)**, or set in
+`RUNELITE_ARGS`, is parsed, accepted, and then quietly AND-ed away — no error, no log line, the plugin simply
+never appears. The maintainers declined a request to change this ("We aren't interested in this due to the
+potential abuse"), so it is not a bug to route around.
+
+What works is running the client jar yourself, which is what `run-dev.ps1` does — using the JRE, the client
+jars and the plugin directory the launcher has already set up, so there is nothing extra to install:
+
+```powershell
+.\gradlew.bat build
+.\run-dev.ps1
+```
+
+Two things that script has to get right and that cost an afternoon to find:
+
+- **`-ea` is mandatory.** With developer mode on and assertions off, `RuneLite.main()` puts up "Developers
+  should enable assertions" and *returns* — before the injector is built, before any plugin loads.
+- **`repository2` holds two versions.** `client-1.12.37.jar` and `runelite-api-1.12.37-runtime.jar` sit
+  beside the 1.12.38 pair, and whichever the classpath hits first wins.
+
+### Once, for a Jagex account
+
+A directly-launched client has no Jagex session, and a migrated account cannot use the old username and
+password screen. RuneLite's answer is a flag that dumps the launcher's tokens to a file — and that flag,
+unlike `--developer-mode`, is *not* gated, so it works through the launcher:
+
+1. Start menu → **RuneLite (configure)** (needs launcher 2.6.3+; ours reports 2.6.10).
+2. In **Client arguments**, put `--insecure-write-credentials`, and Save.
+3. Launch OSRS through the Jagex Launcher as normal, log in, then close it. This writes
+   `C:\Users\<you>\.runelite\credentials.properties`.
+4. Go back into **RuneLite (configure)** and clear that box again.
+
+After that `run-dev.ps1` logs in on its own. That file is a password-equivalent, non-expiring token: do not
+share it, delete it when you are done, and you can revoke it with "End sessions" in your account settings.
+
+`.\gradlew.bat run` is the other route — RuneLite's own template task, which starts a client with
+`--developer-mode --debug` and loads the plugin through `ExternalPluginManager.loadBuiltin`. It needs the
+same credentials step, and `-ea` in its VM options.
 
 ### Does it build?
 
