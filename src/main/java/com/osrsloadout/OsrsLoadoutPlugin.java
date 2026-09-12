@@ -46,6 +46,7 @@ import net.runelite.api.ItemComposition;
 import net.runelite.api.ItemContainer;
 import net.runelite.api.Player;
 import net.runelite.api.ScriptID;
+import net.runelite.api.Varbits;
 import net.runelite.api.events.GameStateChanged;
 import net.runelite.api.events.ScriptPostFired;
 import net.runelite.api.events.WidgetLoaded;
@@ -79,8 +80,9 @@ import okhttp3.ResponseBody;
 @PluginDescriptor(
 	name = "OSRS Loadout",
 	description = "Sends your bank, worn equipment and inventory to osrsloadout.com when you press "
-		+ "Sync, so the site can plan gear from what you actually own. Uploads item ids and quantities "
-		+ "to a third-party server, and your display name only if you separately opt in.",
+		+ "Sync, so the site can plan gear from what you actually own and show your bank back to you. "
+		+ "Uploads item ids, quantities and your bank's slot and tab arrangement to a third-party "
+		+ "server, and your display name only if you separately opt in.",
 	tags = {"bank", "gear", "loadout", "sync", "export"}
 )
 public class OsrsLoadoutPlugin extends Plugin
@@ -102,6 +104,13 @@ public class OsrsLoadoutPlugin extends Plugin
 
 	/** Stands in for the item count when the player asked for a code outright, with no upload behind it. */
 	private static final int ON_REQUEST = -1;
+
+	/**
+	 * A ceiling on the slot list, not an expectation. A bank with every unlock is under a thousand
+	 * slots; this is loose enough never to clip a real one and tight enough that a malformed
+	 * container cannot turn into a megabyte of JSON.
+	 */
+	private static final int MAX_SLOTS = 2000;
 
 	@Inject
 	private Client client;
@@ -144,6 +153,9 @@ public class OsrsLoadoutPlugin extends Plugin
 	 */
 	private SortedMap<Integer, Long> lastCaptured;
 	private String lastCapturedRsn;
+	/** The arrangement that went with that reading, kept alongside it for the same reason. */
+	private int[] lastCapturedSlots = new int[0];
+	private int[] lastCapturedTabs = new int[0];
 
 	private OsrsLoadoutPanel panel;
 	private NavigationButton navButton;
@@ -306,6 +318,8 @@ public class OsrsLoadoutPlugin extends Plugin
 
 		lastCaptured = items;
 		lastCapturedRsn = rsn;
+		lastCapturedSlots = readSlots;
+		lastCapturedTabs = readTabs;
 		refreshPanel();
 	}
 
@@ -359,12 +373,16 @@ public class OsrsLoadoutPlugin extends Plugin
 		// setting exists to prevent, and made the plugin's own description untrue.
 		String rsn = labelName();
 		final TreeMap<Integer, Long> fresh = new TreeMap<>();
+		// read() fills readSlots and readTabs as it goes, so a fresh reading already carries its own
+		// arrangement; only the fallback has to reach for the remembered one.
 		SortedMap<Integer, Long> items = read(fresh) ? fresh : null;
 
 		if (items == null)
 		{
 			items = lastCaptured;
 			rsn = lastCapturedRsn;
+			readSlots = lastCapturedSlots;
+			readTabs = lastCapturedTabs;
 		}
 
 		if (items == null || items.isEmpty())
@@ -376,6 +394,8 @@ public class OsrsLoadoutPlugin extends Plugin
 
 		lastCaptured = items;
 		lastCapturedRsn = rsn;
+		lastCapturedSlots = readSlots;
+		lastCapturedTabs = readTabs;
 
 		say(breakdown());
 
@@ -402,6 +422,8 @@ public class OsrsLoadoutPlugin extends Plugin
 
 		lastBreakdown = new int[4];
 		collect(bank, into, 0);
+		readSlots = layout(bank);
+		readTabs = tabSizes();
 
 		// Equipment and inventory are included alongside the bank because the question the site is asking is
 		// "what do you own", and a player's best items are usually the ones they are wearing. A bank-only
@@ -418,6 +440,60 @@ public class OsrsLoadoutPlugin extends Plugin
 	 * placeholders?" is a question one line of counts settles and an argument otherwise.
 	 */
 	private int[] lastBreakdown = new int[4];
+
+	/** The bank exactly as it is arranged, so the site can show it back rather than approximate it. */
+	private int[] readSlots = new int[0];
+	private int[] readTabs = new int[0];
+
+	/**
+	 * The bank in slot order: one id per slot, 0 where the slot holds nothing worth reporting.
+	 *
+	 * Kept separate from the merged totals because they answer different questions. The totals say
+	 * what you own and add the same rune up across bank, inventory and worn; this says where things
+	 * sit, which only the bank has and which stops meaning anything the moment you merge it.
+	 *
+	 * Empty slots, filler and placeholders all become 0 rather than disappearing. A placeholder is
+	 * still not something you own - it is left out of the totals exactly as before - but it does
+	 * hold its square, and dropping it here would slide every item after it one place left and
+	 * quietly redraw somebody's bank wrong.
+	 */
+	private int[] layout(ItemContainer bank)
+	{
+		final Item[] items = bank.getItems();
+		final int[] out = new int[Math.min(items.length, MAX_SLOTS)];
+		for (int i = 0; i < out.length; i++)
+		{
+			final int id = items[i].getId();
+			if (id <= 0 || id == ItemID.BANK_FILLER)
+			{
+				continue;
+			}
+			final ItemComposition comp = itemManager.getItemComposition(id);
+			out[i] = comp.getPlaceholderTemplateId() != -1 ? 0 : itemManager.canonicalize(id);
+		}
+		return out;
+	}
+
+	/**
+	 * How many slots each of the nine tabs holds. The bank container is one flat list in slot order
+	 * and the tabs are just cuts in it: the first tab takes the first N slots, the second the next,
+	 * and whatever is left over after all nine is the main tab. The game keeps those nine counts in
+	 * varbits, so that is where they come from rather than being inferred from anything.
+	 */
+	private int[] tabSizes()
+	{
+		final int[] v = {
+			Varbits.BANK_TAB_ONE_COUNT, Varbits.BANK_TAB_TWO_COUNT, Varbits.BANK_TAB_THREE_COUNT,
+			Varbits.BANK_TAB_FOUR_COUNT, Varbits.BANK_TAB_FIVE_COUNT, Varbits.BANK_TAB_SIX_COUNT,
+			Varbits.BANK_TAB_SEVEN_COUNT, Varbits.BANK_TAB_EIGHT_COUNT, Varbits.BANK_TAB_NINE_COUNT,
+		};
+		final int[] out = new int[v.length];
+		for (int i = 0; i < v.length; i++)
+		{
+			out[i] = Math.max(0, client.getVarbitValue(v[i]));
+		}
+		return out;
+	}
 
 	private void collect(@Nullable ItemContainer container, Map<Integer, Long> into, int slot)
 	{
@@ -492,7 +568,8 @@ public class OsrsLoadoutPlugin extends Plugin
 	{
 		final Request request = new Request.Builder()
 			.url(LoadoutLink.UPLOAD_ENDPOINT)
-			.post(RequestBody.create(JSON, LoadoutLink.uploadJson(gson, rsn, items, secret())))
+			.post(RequestBody.create(JSON,
+				LoadoutLink.uploadJson(gson, rsn, items, readSlots, readTabs, secret())))
 			.build();
 
 		okHttpClient.newCall(request).enqueue(new Callback()

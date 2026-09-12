@@ -62,9 +62,10 @@ final class LoadoutLink
 	 * from the game, it can contain a non-breaking space, and hand-built JSON is how a stray quote turns into
 	 * a malformed request nobody can reproduce.
 	 */
-	static String uploadJson(Gson gson, @Nullable String rsn, SortedMap<Integer, Long> items, String secret)
+	static String uploadJson(Gson gson, @Nullable String rsn, SortedMap<Integer, Long> items,
+		int[] slots, int[] tabs, String secret)
 	{
-		return gson.toJson(new Upload(rsn, items, secret));
+		return gson.toJson(new Upload(rsn, items, slots, tabs, secret));
 	}
 
 	static String pairJson(Gson gson, @Nullable String rsn, String secret)
@@ -105,6 +106,15 @@ final class LoadoutLink
 		private final String rsn;
 		private final int[] ids;
 		private final int[] qty;
+		/**
+		 * The bank as it is actually arranged: one id per slot in slot order, 0 for a square holding
+		 * nothing we report, and the sizes of the nine tabs. `ids`/`qty` answer what you own and merge
+		 * the same rune across bank, inventory and worn; these answer where it sits, which only the bank
+		 * has and which merging destroys. Both are omitted when empty, so a plugin that has not read a
+		 * bank sends neither and the server sees exactly what it used to.
+		 */
+		private final int[] bank;
+		private final int[] tabs;
 		private final String secret;
 
 		/**
@@ -116,10 +126,15 @@ final class LoadoutLink
 		 * arrive as a negative number and be read as nonsense, whereas a saturated one is merely the largest
 		 * amount the wire can express.
 		 */
-		private Upload(@Nullable String rsn, SortedMap<Integer, Long> items, String secret)
+		private Upload(@Nullable String rsn, SortedMap<Integer, Long> items, int[] slots, int[] tabs,
+			String secret)
 		{
 			this.rsn = rsn;
 			this.secret = secret;
+			// Null rather than an empty array, so Gson leaves them out entirely: a reading taken before
+			// any bank was opened should send no arrangement at all, not an arrangement of nothing.
+			this.bank = slots != null && slots.length > 0 ? slots : null;
+			this.tabs = tabs != null && tabs.length > 0 ? tabs : null;
 			this.ids = new int[items.size()];
 			this.qty = new int[items.size()];
 

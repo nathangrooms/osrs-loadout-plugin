@@ -55,9 +55,27 @@ public class LoadoutLinkTest
 	public void serialisesTheAgreedUploadFields()
 	{
 		final String json = LoadoutLink.uploadJson(gson, "Zezima",
-			items(453, 2400, 536, 180, 1515, 5000, 4151, 1), "abc123");
+			items(453, 2400, 536, 180, 1515, 5000, 4151, 1), null, null, "abc123");
 		assertEquals("{\"rsn\":\"Zezima\",\"ids\":[453,536,1515,4151],"
 			+ "\"qty\":[2400,180,5000,1],\"secret\":\"abc123\"}", json);
+	}
+
+	@Test
+	public void carriesTheBankArrangementWhenThereIsOne()
+	{
+		final String json = LoadoutLink.uploadJson(gson, null, items(995, 12),
+			new int[]{4151, 0, 995}, new int[]{2, 1, 0, 0, 0, 0, 0, 0, 0}, "k");
+		assertEquals("{\"ids\":[995],\"qty\":[12],\"bank\":[4151,0,995],"
+			+ "\"tabs\":[2,1,0,0,0,0,0,0,0],\"secret\":\"k\"}", json);
+	}
+
+	@Test
+	public void omitsTheArrangementRatherThanSendingAnEmptyOne()
+	{
+		// A reading taken before any bank was opened has no arrangement, and "no arrangement" is not the
+		// same claim as "an arrangement of nothing" - the server has to be able to tell them apart.
+		final String json = LoadoutLink.uploadJson(gson, null, items(995, 12), new int[0], new int[0], "k");
+		assertEquals("{\"ids\":[995],\"qty\":[12],\"secret\":\"k\"}", json);
 	}
 
 	@Test
@@ -77,7 +95,7 @@ public class LoadoutLinkTest
 		map.put(4151, 1L);
 		map.put(11834, 3L);
 
-		final String json = LoadoutLink.uploadJson(gson, "Zezima", map, "k");
+		final String json = LoadoutLink.uploadJson(gson, "Zezima", map, null, null, "k");
 		assertTrue(json, json.contains("\"ids\":[4151,11834,12002]"));
 		assertTrue(json, json.contains("\"qty\":[1,3,7]"));
 	}
@@ -87,7 +105,7 @@ public class LoadoutLinkTest
 	{
 		// Summing one id across containers is done in a long. Narrowing it to the wire's int must clamp: a
 		// wrapped total would arrive negative and be read as nonsense.
-		final String json = LoadoutLink.uploadJson(gson, "Zezima", items(995, 5_000_000_000L), "k");
+		final String json = LoadoutLink.uploadJson(gson, "Zezima", items(995, 5_000_000_000L), null, null, "k");
 		assertTrue(json, json.contains("\"qty\":[" + Integer.MAX_VALUE + "]"));
 	}
 
@@ -96,7 +114,7 @@ public class LoadoutLinkTest
 	{
 		// The display name is a label, not a key, so it has to be genuinely optional rather than sent as the
 		// string "null" when nobody is logged in.
-		final String json = LoadoutLink.uploadJson(gson, null, items(995, 12), "k");
+		final String json = LoadoutLink.uploadJson(gson, null, items(995, 12), null, null, "k");
 		assertFalse(json, json.contains("rsn"));
 		assertTrue(json, json.contains("\"secret\":\"k\""));
 	}
@@ -106,7 +124,7 @@ public class LoadoutLinkTest
 	{
 		// A display name arrives from the game, not from us. Gson is here so that a name carrying a quote or
 		// a backslash produces valid JSON rather than a request nobody can reproduce.
-		final String json = LoadoutLink.uploadJson(gson, "a\"b\\c", items(995, 1), "k");
+		final String json = LoadoutLink.uploadJson(gson, "a\"b\\c", items(995, 1), null, null, "k");
 		assertTrue(json, json.contains("\"rsn\":\"a\\\"b\\\\c\""));
 	}
 

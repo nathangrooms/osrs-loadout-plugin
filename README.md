@@ -22,6 +22,8 @@ On each press of Sync, to `https://www.osrsloadout.com/api/v1/bank`:
 
 - the distinct item ids in your bank, worn equipment and inventory
 - how many of each you have
+- how your bank is arranged: which item is in which slot, and the sizes of your nine tabs, so the site
+  can show your bank back to you as you actually keep it
 - a random key generated once on this install
 - your character's display name, **only if you also tick *Send my character name as a label***, which is
   off by default
