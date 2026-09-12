@@ -452,10 +452,13 @@ public class OsrsLoadoutPlugin extends Plugin
 	 * what you own and add the same rune up across bank, inventory and worn; this says where things
 	 * sit, which only the bank has and which stops meaning anything the moment you merge it.
 	 *
-	 * Empty slots, filler and placeholders all become 0 rather than disappearing. A placeholder is
-	 * still not something you own - it is left out of the totals exactly as before - but it does
-	 * hold its square, and dropping it here would slide every item after it one place left and
-	 * quietly redraw somebody's bank wrong.
+	 * Empty slots and the bank filler become 0. Dropping them instead would slide every item after
+	 * them one place to the left and quietly redraw somebody's bank wrong.
+	 *
+	 * A placeholder is sent as the NEGATIVE of the item it stands for. It is still not something
+	 * you own, so it is still left out of the totals exactly as before - but it is something your
+	 * bank shows you, and a bank drawn without its placeholders is not the bank you left. The sign
+	 * carries that distinction in the space a zero was already taking.
 	 */
 	private int[] layout(ItemContainer bank)
 	{
@@ -468,8 +471,11 @@ public class OsrsLoadoutPlugin extends Plugin
 			{
 				continue;
 			}
+			// canonicalize resolves a placeholder to the item it stands for, which is exactly the id
+			// worth drawing - the ghost in game is that item, greyed.
 			final ItemComposition comp = itemManager.getItemComposition(id);
-			out[i] = comp.getPlaceholderTemplateId() != -1 ? 0 : itemManager.canonicalize(id);
+			final int canonical = itemManager.canonicalize(id);
+			out[i] = comp.getPlaceholderTemplateId() != -1 ? -canonical : canonical;
 		}
 		return out;
 	}
