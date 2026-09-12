@@ -88,6 +88,9 @@ public class OsrsLoadoutPlugin extends Plugin
 
 	private static final MediaType JSON = MediaType.parse("application/json");
 
+	/** Stands in for the item count when the player asked for a code outright, with no upload behind it. */
+	private static final int ON_REQUEST = -1;
+
 	@Inject
 	private Client client;
 
@@ -209,7 +212,7 @@ public class OsrsLoadoutPlugin extends Plugin
 
 		// The display name is live game state, so it can only be read on the client thread - and this arrives
 		// on Swing's, from the settings panel.
-		clientThread.invoke(() -> requestCode(displayName(), true));
+		clientThread.invoke(() -> requestCode(displayName(), ON_REQUEST));
 	}
 
 	/**
@@ -328,7 +331,7 @@ public class OsrsLoadoutPlugin extends Plugin
 		{
 			// The code and the item count belong on one line, so the count is carried into the pairing call
 			// rather than announced ahead of it.
-			requestCode(rsn, false, count);
+			requestCode(rsn, count);
 			return;
 		}
 
@@ -339,19 +342,15 @@ public class OsrsLoadoutPlugin extends Plugin
 		}
 	}
 
-	private void requestCode(@Nullable String rsn, boolean onDemand)
-	{
-		requestCode(rsn, onDemand, -1);
-	}
-
 	/**
 	 * Mints a single-use code the player types into the website, which is how a browser is granted the right
 	 * to read this bank. Ten minutes, one use, and asking again replaces any unused code.
 	 *
-	 * @param count items just uploaded, or -1 when the player asked for a code rather than this following an
-	 *              upload
+	 * @param count items just uploaded, so the code and the count can share one chat line, or
+	 *              {@link #ON_REQUEST} when the player asked for a code outright and there is no count to
+	 *              report
 	 */
-	private void requestCode(@Nullable String rsn, boolean onDemand, int count)
+	private void requestCode(@Nullable String rsn, int count)
 	{
 		final Request request = new Request.Builder()
 			.url(LoadoutLink.PAIR_ENDPOINT)
@@ -398,17 +397,12 @@ public class OsrsLoadoutPlugin extends Plugin
 				// O/0 and no I/1/l precisely because this gets read off a chat line and typed by hand, so
 				// reformatting it here could only do harm.
 				final String tail = "Type " + code + " at osrsloadout.com to link this browser.";
-				say(count < 0 ? tail : "Synced " + count + " items. " + tail);
+				say(count == ON_REQUEST ? tail : "Synced " + count + " items. " + tail);
 
 				// Only now, with a code actually in front of the player. Setting this when the request was
 				// merely sent would burn their one prompt on a failure they never saw.
 				configManager.setConfiguration(CONFIG_GROUP, LINKED_KEY, true);
 				announced = true;
-
-				if (onDemand)
-				{
-					log.debug("Issued link code on request");
-				}
 			}
 		});
 	}
@@ -419,7 +413,7 @@ public class OsrsLoadoutPlugin extends Plugin
 	 */
 	private void announceWithoutCode(int count)
 	{
-		if (count >= 0 && !announced)
+		if (count != ON_REQUEST && !announced)
 		{
 			announced = true;
 			say("Synced " + count + " items.");
