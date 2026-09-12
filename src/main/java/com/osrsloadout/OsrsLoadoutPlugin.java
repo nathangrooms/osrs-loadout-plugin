@@ -74,8 +74,9 @@ import okhttp3.ResponseBody;
 @Slf4j
 @PluginDescriptor(
 	name = "OSRS Loadout",
-	description = "Syncs your bank to osrsloadout.com when you open a bank. Uploads your item ids and "
-		+ "character name to a third party server.",
+	description = "Sends your bank, worn equipment and inventory to osrsloadout.com when you press "
+		+ "Sync, so the site can plan gear from what you actually own. Uploads item ids, quantities "
+		+ "and your display name to a third-party server.",
 	tags = {"bank", "gear", "loadout", "sync", "export"}
 )
 public class OsrsLoadoutPlugin extends Plugin
