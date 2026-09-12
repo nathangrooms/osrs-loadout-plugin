@@ -24,77 +24,55 @@
  */
 package com.osrsloadout;
 
+import com.google.gson.Gson;
 import java.util.Collection;
-import java.util.TreeSet;
 
 /**
- * The wire format between this plugin and osrsloadout.com.
+ * Everything about the link between this install and osrsloadout.com: where the bank goes and what the
+ * request body looks like.
  *
- * The site is static and has no backend, so the only channel available is a URL the player carries across
- * themselves. Everything after the '#' is fragment, which browsers never put on the wire, so even the act of
- * opening the link tells the site's host nothing about what is in it.
- *
- * The site's own share links are "v1~", which indexes into the site's internal item array. A plugin cannot
- * know those indexes and they move whenever the site's item data is regenerated. "v2~" exists for this
- * plugin specifically and is keyed on Grand Exchange item ids, which are the one name for an item that the
- * game and the site already agree on. The site skips ids it has no item for, so sending a whole bank is
- * safe.
- *
- * This class holds no RuneLite types on purpose: the format is the part worth testing, and a pure function
- * can be tested without a game client.
+ * Kept separate from the plugin, and free of RuneLite types, because the request body is the part worth
+ * testing and a JSON shape can be asserted without a game client.
  */
 final class LoadoutLink
 {
-	static final String BASE_URL = "https://www.osrsloadout.com/";
-
-	private static final String VERSION = "v2";
-
-	/**
-	 * Base 36 rather than decimal because item ids run to five digits and a full bank is a thousand of them;
-	 * base 36 is the largest radix both Integer.toString and JavaScript's Number#toString agree on, which is
-	 * what lets the site decode this with a bare parseInt(x, 36).
-	 */
-	private static final int RADIX = 36;
+	static final String ENDPOINT = "https://yqdqbsbgowqjkjplkrzi.supabase.co/functions/v1/bank";
 
 	private LoadoutLink()
 	{
 	}
 
 	/**
-	 * Ascending and de-duplicated is not cosmetic. It makes the string a canonical function of the item set,
-	 * which is what lets the caller compare two packings to decide whether anything actually changed.
-	 *
-	 * Non-positive ids are dropped here as well as at the call site, so this invariant holds no matter who
-	 * calls it.
+	 * Gson rather than string concatenation because a display name is attacker-adjacent input: it arrives
+	 * from the game, it can contain a non-breaking space, and hand-built JSON is how a stray quote turns into
+	 * a malformed request nobody can reproduce.
 	 */
-	static String pack(Collection<Integer> itemIds)
+	static String json(Gson gson, String rsn, Collection<Integer> ids, String secret)
 	{
-		// TreeSet gives the sort and the de-duplication in one pass, on Integer's natural (numeric) order.
-		final TreeSet<Integer> unique = new TreeSet<>();
-		for (Integer id : itemIds)
-		{
-			if (id != null && id > 0)
-			{
-				unique.add(id);
-			}
-		}
-
-		final StringBuilder sb = new StringBuilder(VERSION).append('~');
-		boolean first = true;
-		for (int id : unique)
-		{
-			if (!first)
-			{
-				sb.append('.');
-			}
-			sb.append(Integer.toString(id, RADIX));
-			first = false;
-		}
-		return sb.toString();
+		return gson.toJson(new Payload(rsn, ids, secret));
 	}
 
-	static String url(String packed)
+	/**
+	 * The field names are the wire contract; Gson takes them verbatim. Renaming one silently changes the
+	 * request, which is what the test on this class is guarding.
+	 */
+	private static final class Payload
 	{
-		return BASE_URL + "#" + packed;
+		private final String rsn;
+		private final int[] ids;
+		private final String secret;
+
+		private Payload(String rsn, Collection<Integer> ids, String secret)
+		{
+			this.rsn = rsn;
+			this.secret = secret;
+			this.ids = new int[ids.size()];
+
+			int i = 0;
+			for (int id : ids)
+			{
+				this.ids[i++] = id;
+			}
+		}
 	}
 }

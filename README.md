@@ -1,135 +1,187 @@
 # OSRS Loadout
 
-A RuneLite plugin that copies a link to your gear onto your clipboard when you open a bank. Paste it into
-your browser and [osrsloadout.com](https://www.osrsloadout.com/) opens with everything you own already
-filled in.
+A RuneLite plugin that syncs your bank to [osrsloadout.com](https://www.osrsloadout.com/). You open a bank,
+it uploads your item ids, and the site knows what you own. There is nothing to paste, nothing to click and
+nothing to set up.
 
-That is the whole plugin. There is no overlay, no side panel, no configuration screen, and it watches
-nothing except the bank interface opening.
+That is the whole plugin. No overlay, no side panel, and it watches nothing except the bank interface
+opening.
 
 ## What happens, exactly
 
 1. You open a bank.
-2. The plugin reads your bank, your worn equipment and your inventory.
-3. It builds a link and puts it on your clipboard.
-4. A line appears in your chat box saying how many items it copied.
+2. The plugin reads your bank, your worn equipment and your inventory, and reduces them to a list of item
+   ids.
+3. If that list differs from the last one it sent, it POSTs it to the server with your character's display
+   name.
+4. The first successful sync of a session says so in your chat box. Later ones are silent.
 
-## Nothing is uploaded
+Reopening a bank you have not changed sends nothing at all.
 
-osrsloadout.com is a static site with no backend, and its footer promises that nothing is uploaded. This
-plugin does not change that. It opens no sockets, contacts no server, and writes nothing to disk.
+## What is uploaded
 
-The item list travels in the URL *fragment* — the part after the `#`:
+**Your bank is uploaded.** This plugin sends data to a server. Specifically, on each bank open where
+something changed, it sends:
+
+- your character's display name,
+- the list of distinct item ids in your bank, worn equipment and inventory,
+- a random key generated on this install, used to prove that this install owns that character's data.
+
+It does **not** send quantities, levels, location, chat, your IP beyond the ordinary fact of making an HTTPS
+request, or anything about any other character.
+
+The destination is a Supabase project run by the owner of osrsloadout.com:
 
 ```
-https://www.osrsloadout.com/#v2~37b.93u.94o
+POST https://yqdqbsbgowqjkjplkrzi.supabase.co/functions/v1/bank
 ```
 
-Browsers never send the fragment to the server. It is not in the request line and not in the headers, so
-even the act of opening the link tells the site's host nothing about what is in it. The site reads the
-fragment with JavaScript in your own browser.
+**The result is readable by anyone who knows your character's display name.** There are no accounts and no
+passwords on the site side. This is the same order of exposure as the public hiscores: your name is already
+public, and now the list of items you own is attached to it. If that is not acceptable to you, turn the
+plugin off — it is a real consideration, not a formality.
 
-The clipboard is the whole transport. The link goes no further than wherever you paste it.
+Earlier versions of this plugin put the item list in a URL fragment on your clipboard and uploaded nothing.
+That was more private and more annoying, and it was dropped because a sync you have to perform by hand is a
+sync that stops happening.
 
-### The link format
+### How the character is claimed
 
-`v2~` followed by each Grand Exchange item id in base 36, joined with `.`, ascending and de-duplicated.
+There are no accounts, so the first install to sync a name claims it. The server stores a SHA-256 of the
+random key that install generated, and every later write for that name has to present the same key.
 
-The site's own share links use `v1~`, which encodes items as indexes into the site's internal item array. A
-plugin cannot know those indexes and they move whenever the site's data is regenerated, so `v2~` exists for
-this plugin and is keyed on Grand Exchange ids instead — the one name for an item that the game and the site
-already agree on. The site skips ids it has no item for, so sending a whole bank is safe.
+The key is generated once, stored in your RuneLite config, never displayed and never asked for. That is the
+entire reason there is nothing to set up.
 
-Noted items are sent as their unnoted id. Placeholders, bank fillers and empty slots are not sent at all.
+If you sync the same character from a second RuneLite install, the server answers `409` and the plugin says
+so once in chat and then stops trying. "Reset sync key" in the plugin settings clears the key on whichever
+install you run it on, letting the other one take the character over.
 
 ## Judgement calls
 
 **The trigger is `BANKMAIN_FINISHBUILDING`, not `ItemContainerChanged`.** The obvious hook is
-`ItemContainerChanged` for the bank container, and it is wrong: that event fires when a stack size changes,
-so on a bank nobody has touched since logging in there is nothing to fire and the player would open their
-bank and get no link. `WidgetLoaded` for the bank group arrives when the interface opens, which is not the
-same moment as the server having sent the container. The bank finishing its build is both: the client has
-just laid the bank out from the container, so the container is present and current. This is also what
-runelite-client's own `BankPlugin` uses to compute your bank value, which needs the same guarantee.
+`ItemContainerChanged` for the bank container, and it is wrong: it fires when a stack size changes, so on a
+bank nobody has touched since logging in there is nothing to fire and that player would never sync at all.
+`WidgetLoaded` for the bank group arrives when the interface opens, which is not the same moment as the
+server having sent the container. The bank finishing its build is both — the client has just laid the bank
+out from the container, so the container is present and current. runelite-client's own `BankPlugin` computes
+your bank value on this same script for the same reason.
 
 **`WidgetLoaded` still does something: it debounces.** The bank rebuilds on every tab switch, every search
-keystroke and every withdrawal, so `BANKMAIN_FINISHBUILDING` on its own would copy dozens of times per visit.
-`WidgetLoaded` fires once per bank opening, so it arms a flag that the first build after it consumes. One
-copy per trip to a banker.
+keystroke and every withdrawal, so `BANKMAIN_FINISHBUILDING` alone would fire dozens of requests per visit.
+`WidgetLoaded` fires once per opening, so it arms a flag that the first build after it consumes.
 
-**Worn equipment and inventory are included, not just the bank.** The question the site is asking is "what
-do you own", and a player's best items are usually the ones they are wearing. A bank-only read would tell
-the planner you do not own your own gear, which is the one thing it must not get wrong. This adds no
-user-visible surface: same trigger, same pass, same link.
+**Worn equipment and inventory are sent too, not just the bank.** This is the one place the plugin does more
+than it was asked to, and it is deliberate: the question the site is asking is "what do you own", and a
+player's best items are usually the ones they are wearing. A bank-only read would tell the planner you do
+not own your own gear, which is the one thing it must not get wrong. It costs nothing — same trigger, same
+pass, same request — and the server takes a list of ids without caring where they came from. Reverting it is
+deleting two lines in `capture()`.
 
-**It copies on every bank opening, even if nothing changed.** The alternative is to skip the copy when the
-item set is identical to last time, which would stop it clobbering a clipboard you were using for something
-else. It is not the default because it breaks the mental model: open bank, get link. If you open your bank,
-see the chat message, and find something else on your clipboard, that is worse than a redundant copy. If
-this turns out to be annoying in practice, the fix is to keep the last packed string in a field and return
-early when it matches.
+**The change check keeps the id set, not a hash of it.** A full bank is about four kilobytes of `Integer`,
+comparing it is exact, and a hash would introduce a collision that presents as the plugin silently refusing
+to sync — a bug nobody would ever diagnose from inside the game.
 
-**There is no config class.** A RuneLite plugin does not need one, and there is no decision here worth
-handing to the player that is not better fixed in the code.
+**A `409` latches.** If another install owns the name, that is still true on the next bank and the one after.
+The plugin says so once and stops until you log out or reset the key, rather than generating a request and a
+chat line every time you bank.
 
-**The clipboard write happens off the client thread.** Reading the containers and resolving item ids must
-happen on the client thread and does. The clipboard must not: on Windows and X11 a clipboard write means
-negotiating with whatever process currently owns it, and a stall on the game thread is a visible freeze.
-runelite-client's own `ImageCapture` moves off the client thread before writing the clipboard for exactly
-this reason. The chat message is queued from that worker thread, which is safe because
-`ChatMessageManager#queue` is an add to a `ConcurrentLinkedQueue` that the client thread drains.
+**Failures are silent.** A dropped connection produces a debug log line and nothing else. The next bank is
+the retry, and it arrives on its own without a timer, a backoff or a queue.
 
-## An alternative worth considering
+**There is a config, reluctantly.** The Plugin Hub requires that "Plugins which communicate with third party
+servers [...] have a warning either on the plugin, or on the configuration option enabling the setting,
+explaining what data is being sent". The sync toggle exists to carry that disclosure, so it defaults to on.
+The sync key is deliberately not a config item; it is written straight to the config store so it never
+renders in the settings panel.
 
-`net.runelite.client.util.LinkBrowser.browse(url)` would open the player's browser directly, removing the
-paste step entirely. It uploads nothing either — same fragment, same absence of a server — and it is a
-materially nicer experience for a first-time user who does not know what to do with a clipboard.
+**The HTTP is `enqueue`, not `execute`.** Reading the containers and resolving ids happens on the client
+thread because it must. The request does not: OkHttp dispatches it on its own pool, so an unreachable server
+costs the player nothing.
 
-It is not what this plugin does because opening a browser window every time you walk up to a banker is
-intrusive in a way that a clipboard write is not, and a plugin that seizes focus mid-game will annoy people
-into uninstalling it. The version of this that would be worth building is a bank-interface button that opens
-the browser on demand, with the automatic clipboard copy left as it is. That is more UI than the brief asked
-for, so it is written down here rather than built.
+## Running it on this machine
 
-One practical note either way: a full bank packs to roughly five kilobytes of URL. That is fine in a
-fragment for every current browser, and fine to paste, but it is not something to put in a chat message or a
-QR code.
+`gradlew.bat run` launches a RuneLite development client with this plugin already loaded and developer mode
+on. It is the whole testing loop: edit, `run`, open a bank.
 
-## Building
+The task is called `run`, not `runClient`. It comes from RuneLite's own plugin template, where it is declared
+as a `JavaExec` that starts the client with `--developer-mode --debug` and side-loads the plugin class
+through `ExternalPluginManager.loadBuiltin`.
 
-Requires a JDK 11 or newer. The Gradle wrapper is checked in, so:
+### You need a JDK first
 
-```
-./gradlew build
-```
+RuneLite builds with **JDK 11** — its own instructions say "You can build RuneLite locally using JDK 11", and
+the Plugin Hub recommends Java 11 and Eclipse Temurin. Anything from 11 upward works for this plugin, which
+compiles with `--release 11` regardless of the JDK doing the compiling.
 
-on Windows:
+There is no `java` on this machine's PATH and no `gradle` either. Two Temurin JDKs are nonetheless sitting on
+disk, bundled inside other applications:
 
-```
-gradlew.bat build
-```
+- `C:\Program Files\RuneMate\jre` — Temurin 17.0.8
+- `C:\Users\natha\AppData\Local\JDownloader 2\jre` — Temurin 21.0.6
 
-This compiles against `net.runelite:client:latest.release` from `repo.runelite.net` and runs the unit tests
-for the link format.
-
-To run a development client with the plugin already loaded:
+Either can build this project, and the first one is what was used to verify it. Borrowing another
+application's runtime is fine for a one-off but it disappears the day you uninstall that application, so
+install a real JDK when you want this to keep working:
 
 ```
-./gradlew run
+winget install EclipseAdoptium.Temurin.11.JDK
 ```
 
-## Installing it locally for testing
+Close and reopen the terminal afterwards so the new PATH is picked up.
 
-RuneLite side-loads plugins from a directory, but only when it is started in developer mode.
+### The commands, in order
 
-1. `./gradlew build`
-2. Copy `build/libs/osrs-loadout-1.0.0.jar` into `~/.runelite/sideloaded-plugins/` (on Windows,
-   `C:\Users\<you>\.runelite\sideloaded-plugins\`). Create the directory if it does not exist. Use the plain
-   jar, not the shadow jar — the shadow jar bundles an entire client.
-3. Start RuneLite with the `--developer-mode` flag. Side-loading is skipped entirely without it.
+Open PowerShell in this directory.
+
+If you installed Temurin with the winget line above, this is the whole list:
+
+```
+.\gradlew.bat build
+.\gradlew.bat run
+```
+
+If you would rather not install anything yet, point the build at the JDK already on the machine first:
+
+```
+$env:JAVA_HOME = "C:\Program Files\RuneMate\jre"
+.\gradlew.bat build
+.\gradlew.bat run
+```
+
+`$env:JAVA_HOME` lasts only for that terminal window, so set it again each time you open a new one.
+
+The first `build` downloads Gradle 8.10 and the RuneLite client jars and takes a couple of minutes. Later
+runs are seconds. `build` also runs the unit tests; `run` builds first, so you can skip straight to it once
+you trust it.
+
+One gotcha that is not this plugin's fault: **if you use a Jagex account, the development client cannot log
+in without extra setup.** RuneLite documents it at
+[Using Jagex Accounts](https://github.com/runelite/runelite/wiki/Using-Jagex-Accounts). Worth reading before
+you sit down to test, rather than after.
+
+### The other way: side-loading into the real client
+
+If you would rather test in your normal RuneLite install than in the development client, it side-loads
+plugins from a directory — but only when started in developer mode.
+
+1. `.\gradlew.bat build`
+2. Copy `build\libs\osrs-loadout-1.0.0.jar` into `C:\Users\<you>\.runelite\sideloaded-plugins\`, creating
+   the directory if it does not exist. Use the plain jar, not the shadow jar — the shadow jar bundles an
+   entire client.
+3. Start RuneLite with `--developer-mode`. Side-loading is skipped entirely without it.
 4. The plugin appears in the plugin list as "OSRS Loadout".
 
-`./gradlew run` is the easier path for iterating, since it builds and launches in one step.
+`.\gradlew.bat run` is the easier loop; this path is for testing against your real account and real bank.
+
+### Does it build?
+
+Yes, and it was verified here rather than assumed: `gradlew.bat build` completed with `BUILD SUCCESSFUL`
+against `net.runelite:client` 1.12.38 resolved live from `repo.runelite.net`, with the four unit tests
+passing. Because the build compiles against the real client jar, that result also confirms every RuneLite API
+this plugin calls actually exists at the version it will ship against.
+
+The Gradle wrapper is committed, so none of this needs a system Gradle install.
 
 ## What would be submitted to the Plugin Hub
 
@@ -137,8 +189,8 @@ Two things, in two repositories.
 
 **This repository**, pushed to GitHub as a public repository under the owner's account. The Plugin Hub reads
 it directly at a pinned commit. The files it cares about are `runelite-plugin.properties` (already written),
-the `LICENSE` (BSD 2-Clause, which is the licence the Plugin Hub's own instructions tell authors to pick),
-and optionally an `icon.png` of no more than 48x72 pixels at the repository root. There is no icon yet.
+the `LICENSE` (BSD 2-Clause, which is the licence the Plugin Hub's instructions tell authors to pick), and
+optionally an `icon.png` of no more than 48x72 pixels at the repository root. There is no icon yet.
 
 **A one-file pull request to [runelite/plugin-hub](https://github.com/runelite/plugin-hub)**, adding
 `plugins/osrs-loadout` containing nothing but:
@@ -148,28 +200,30 @@ repository=https://github.com/<owner>/osrs-loadout-plugin.git
 commit=<the full 40-character commit hash>
 ```
 
-Then the PR's CI has to come back green, and a reviewer has to merge it. Updating the plugin later means
-changing that `commit=` line and nothing else.
+Then the PR's CI has to come back green and a reviewer has to merge it. Updating later means changing that
+`commit=` line and nothing else.
 
-A few things about the submission that shaped the code:
+Things about the submission that shaped the code:
 
-- `build=standard` in `runelite-plugin.properties` means the Plugin Hub **replaces** `build.gradle` and
-  `settings.gradle` with its own copies when it builds the plugin. Anything clever in the build file would
-  work locally and then vanish. This is why the build file is deliberately kept in the template's shape.
-- The Plugin Hub requires any dependency that is not already a transitive dependency of runelite-client to
-  have its cryptographic hash added to a verification metadata file, reviewed by hand, and it warns that
-  this "adds significantly to the amount of time it takes for a plugin submission or update to be reviewed".
-  This plugin has no third-party dependencies at all.
-- Review is about two things: that the plugin is not malicious, and that it does not break Jagex's
-  third-party client rules. Reflection and native code are restricted, external programs may not be
-  executed, and code may not be downloaded at runtime. This plugin does none of those things — the only
-  non-RuneLite API it touches is `java.awt.datatransfer` for the clipboard.
+- **The third-party server disclosure is a hard requirement**, quoted above. It is met by the plugin
+  description and by the sync option's description. This is the rule most likely to get the plugin sent back
+  for changes, so the wording deserves a careful read before submitting.
+- `build=standard` means the Plugin Hub **replaces** `build.gradle` and `settings.gradle` with its own copies
+  when it builds. Anything clever in the build file would work locally and then vanish, which is why it is
+  kept in the template's shape.
+- Any dependency that is not already a transitive dependency of runelite-client needs its cryptographic hash
+  added to a verification metadata file and reviewed by hand, and the Hub warns this "adds significantly to
+  the amount of time it takes for a plugin submission or update to be reviewed". This plugin adds none:
+  OkHttp, Gson and Guice all come from the client.
+- Review covers two things — that the plugin is not malicious, and that it does not break Jagex's
+  third-party client rules. Reflection and native code are restricted, external programs may not be executed,
+  and code may not be downloaded at runtime. This plugin does none of those.
 
 ### Next step
 
-This repository has one local commit and no remote. Creating the GitHub repository and pushing is
-deliberately left to the owner to do after review, since the Plugin Hub submission pins a commit hash from a
-public repository and that should not happen before someone has read the code.
+This repository has local commits and no remote. Creating the GitHub repository and pushing is deliberately
+left to the owner, since the Plugin Hub submission pins a commit hash from a public repository and that
+should not happen before someone has read the code.
 
 ## Licence
 
