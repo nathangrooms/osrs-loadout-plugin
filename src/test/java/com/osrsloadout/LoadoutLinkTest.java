@@ -54,9 +54,9 @@ public class LoadoutLinkTest
 	@Test
 	public void serialisesTheAgreedUploadFields()
 	{
-		final String json = LoadoutLink.uploadJson(gson, "AvantoeKush",
+		final String json = LoadoutLink.uploadJson(gson, "Zezima",
 			items(453, 2400, 536, 180, 1515, 5000, 4151, 1), "abc123");
-		assertEquals("{\"rsn\":\"AvantoeKush\",\"ids\":[453,536,1515,4151],"
+		assertEquals("{\"rsn\":\"Zezima\",\"ids\":[453,536,1515,4151],"
 			+ "\"qty\":[2400,180,5000,1],\"secret\":\"abc123\"}", json);
 	}
 
