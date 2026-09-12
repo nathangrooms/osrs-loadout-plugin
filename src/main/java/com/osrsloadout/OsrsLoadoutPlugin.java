@@ -275,7 +275,34 @@ public class OsrsLoadoutPlugin extends Plugin
 		}
 
 		pendingCapture = false;
-		capture();
+
+		// Read it, do not send it. Opening a bank is not a request to upload one - the player decides
+		// when their gear leaves the client, with the button. What this buys is that the button then
+		// works instantly and works with the bank closed, because the reading is already in hand.
+		readOnly();
+	}
+
+	/**
+	 * Takes a reading and keeps it, without uploading. Every bank you open refreshes what "Sync my bank
+	 * now" will send, so pressing it never has to ask you to go and open a bank first.
+	 */
+	private void readOnly()
+	{
+		if (!config.sync())
+		{
+			return;
+		}
+
+		final String rsn = displayName();
+		final TreeMap<Integer, Long> items = new TreeMap<>();
+		if (!read(items))
+		{
+			return;
+		}
+
+		lastCaptured = items;
+		lastCapturedRsn = rsn;
+		refreshPanel();
 	}
 
 	/**
@@ -308,33 +335,6 @@ public class OsrsLoadoutPlugin extends Plugin
 	 * Client#getItemDefinition, and the item containers and the local player are live game state, so none of
 	 * it may be touched from anywhere else. Only the request leaves this thread.
 	 */
-	private void capture()
-	{
-		if (!config.sync())
-		{
-			return;
-		}
-
-		final String rsn = displayName();
-		final TreeMap<Integer, Long> items = new TreeMap<>();
-		if (!read(items))
-		{
-			return;
-		}
-
-		lastCaptured = items;
-		lastCapturedRsn = rsn;
-
-		if (items.equals(lastSent) && equal(rsn, lastSentRsn))
-		{
-			// Idly reopening the bank is not a request. Map equality covers quantities too, so spending half
-			// a stack does count as a change even though the set of ids has not moved.
-			return;
-		}
-
-		upload(rsn, items, false);
-	}
-
 	/**
 	 * The manual re-sync, for when the player can see that the site is wrong and changing their bank to force
 	 * an upload would be an absurd thing to have to do.

@@ -73,10 +73,17 @@ class OsrsLoadoutPanel extends PluginPanel
 	}
 
 	private static final Color GOOD = new Color(0x4C, 0xAF, 0x50);
-	/** The usable width inside this panel's own padding. Everything that wraps is measured against it. */
-	private static final int INNER = PANEL_WIDTH - 20;
+	/**
+	 * The width text may actually occupy. PANEL_WIDTH is the panel; the scrollbar takes SCROLLBAR_WIDTH
+	 * out of it whenever the content is taller than the window, and this panel's own padding takes 20
+	 * more. Measuring wraps against PANEL_WIDTH alone is why the first two versions clipped their last
+	 * line: the text was laid out for a width it never got.
+	 */
+	private static final int INNER = PANEL_WIDTH - SCROLLBAR_WIDTH - 20;
 
 	private final Actions actions;
+
+	private final java.util.List<JTextArea> wraps = new java.util.ArrayList<>();
 
 	private final JLabel status = new JLabel();
 	private final JTextArea detail = wrapped();
@@ -132,7 +139,7 @@ class OsrsLoadoutPanel extends PluginPanel
 
 		final JPanel buttons = new JPanel(new GridLayout(0, 1, 0, 6));
 		buttons.setBackground(ColorScheme.DARK_GRAY_COLOR);
-		sync.setToolTipText("Upload your bank again now, even if nothing has changed");
+		sync.setToolTipText("Upload your bank to osrsloadout.com now");
 		sync.addActionListener(e -> actions.syncNow());
 		link.setToolTipText("Get a fresh code to link another browser");
 		link.addActionListener(e -> actions.newCode());
@@ -146,9 +153,8 @@ class OsrsLoadoutPanel extends PluginPanel
 		body.add(Box.createVerticalStrut(14));
 
 		final JTextArea help = wrapped();
-		help.setText("1. Open a bank in game.\n"
-			+ "2. Type the code at osrsloadout.com.\n"
-			+ "3. That is all — every bank you open updates the site by itself.");
+		help.setText("Open a bank, press Sync, then type the code at osrsloadout.com. "
+			+ "After that the code is only needed for a new browser.");
 		body.add(row(help));
 
 		add(body, BorderLayout.NORTH);
@@ -161,7 +167,7 @@ class OsrsLoadoutPanel extends PluginPanel
 	 * HTML width is a hint - one long word and it is over the edge, which is exactly how the first version
 	 * of this panel clipped half of its own sentences.
 	 */
-	private static JTextArea wrapped()
+	private JTextArea wrapped()
 	{
 		final JTextArea a = new JTextArea();
 		a.setEditable(false);
@@ -172,15 +178,20 @@ class OsrsLoadoutPanel extends PluginPanel
 		a.setFont(FontManager.getRunescapeSmallFont());
 		a.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
 		a.setBorder(null);
+		wraps.add(a);
 		return a;
 	}
 
 	/** Pins a component to the panel's width so BoxLayout cannot stretch or centre it. */
 	private static Component row(Component c)
 	{
-		final int h = c.getPreferredSize().height;
+		// Deliberately no preferred HEIGHT for wrapped text: its height depends on how many lines the
+		// text takes at this width, which is not known until it has one. resize() works that out.
 		c.setMaximumSize(new Dimension(INNER, Integer.MAX_VALUE));
-		c.setPreferredSize(new Dimension(INNER, h));
+		if (!(c instanceof JTextArea))
+		{
+			c.setPreferredSize(new Dimension(INNER, c.getPreferredSize().height));
+		}
 		if (c instanceof JPanel || c instanceof JLabel || c instanceof JTextArea)
 		{
 			((javax.swing.JComponent) c).setAlignmentX(Component.LEFT_ALIGNMENT);
@@ -217,7 +228,7 @@ class OsrsLoadoutPanel extends PluginPanel
 			status.setText(linked ? "Linked" : "Not linked yet");
 			status.setForeground(linked ? GOOD : ColorScheme.PROGRESS_INPROGRESS_COLOR);
 			detail.setText(when == null
-				? "No bank read yet. Open one in game."
+				? "No bank read yet. Open one in game, then press Sync."
 				: items + " items at " + when
 					+ (placeholders > 0 ? ", " + placeholders + " placeholders ignored" : ""));
 			link.setText(linked ? "Link another browser" : "Get a link code");
@@ -235,7 +246,7 @@ class OsrsLoadoutPanel extends PluginPanel
 			if (has)
 			{
 				code.setText(value);
-				codeHint.setText("Type this at osrsloadout.com. Lasts ten minutes, works once.");
+				codeHint.setText("Type at osrsloadout.com. Ten minutes, one use.");
 			}
 			resize();
 		});
@@ -244,7 +255,7 @@ class OsrsLoadoutPanel extends PluginPanel
 	/** A wrapped text area's height depends on its text, so it has to be re-measured when the text moves. */
 	private void resize()
 	{
-		for (JTextArea a : new JTextArea[]{detail, codeHint})
+		for (JTextArea a : wraps)
 		{
 			a.setSize(INNER, Short.MAX_VALUE);
 			a.setPreferredSize(new Dimension(INNER, a.getPreferredSize().height));
