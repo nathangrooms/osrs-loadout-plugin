@@ -31,6 +31,7 @@ import java.util.Collection;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.UUID;
+import javax.annotation.Nullable;
 import javax.inject.Inject;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.ChatMessageType;
@@ -46,6 +47,7 @@ import net.runelite.api.events.WidgetLoaded;
 import net.runelite.api.gameval.InterfaceID;
 import net.runelite.api.gameval.InventoryID;
 import net.runelite.api.gameval.ItemID;
+import net.runelite.client.callback.ClientThread;
 import net.runelite.client.chat.ChatColorType;
 import net.runelite.client.chat.ChatMessageBuilder;
 import net.runelite.client.chat.ChatMessageManager;
@@ -63,6 +65,7 @@ import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.RequestBody;
 import okhttp3.Response;
+import okhttp3.ResponseBody;
 
 @Slf4j
 @PluginDescriptor(
@@ -76,15 +79,20 @@ public class OsrsLoadoutPlugin extends Plugin
 	static final String CONFIG_GROUP = "osrsloadout";
 
 	/**
-	 * Not a @ConfigItem. Keeping it out of the config interface keeps it out of the settings panel, so there
-	 * is nothing for a player to read out to someone who asks nicely.
+	 * Neither of these is a @ConfigItem. Keeping them out of the config interface keeps them out of the
+	 * settings panel: the secret is the only thing that identifies this bank, so there should be nothing for
+	 * a player to read out to someone who asks nicely, and nothing to clear by accident.
 	 */
 	private static final String SECRET_KEY = "syncKey";
+	private static final String LINKED_KEY = "linked";
 
 	private static final MediaType JSON = MediaType.parse("application/json");
 
 	@Inject
 	private Client client;
+
+	@Inject
+	private ClientThread clientThread;
 
 	@Inject
 	private ItemManager itemManager;
@@ -112,18 +120,12 @@ public class OsrsLoadoutPlugin extends Plugin
 	private boolean pendingCapture;
 
 	/**
-	 * The last set of ids accepted by the server, and who it was for. A hash would do, but the set itself is
-	 * about four kilobytes for a full bank and comparing it is exact, so there is no reason to introduce a
-	 * collision that would silently stop syncing.
+	 * The last set of ids accepted by the server, and the label that went with it. A hash would do, but the
+	 * set itself is about four kilobytes for a full bank and comparing it is exact, so there is no reason to
+	 * introduce a collision that would present as the plugin silently refusing to sync.
 	 */
 	private Set<Integer> lastSent;
 	private String lastSentRsn;
-
-	/**
-	 * Latched on a 409. The server is telling us another install already owns this name, which will still be
-	 * true on the next bank and the one after that, so retrying is pure noise for both ends.
-	 */
-	private boolean nameClaimed;
 
 	private boolean announced;
 
@@ -191,20 +193,23 @@ public class OsrsLoadoutPlugin extends Plugin
 	@Subscribe
 	public void onConfigChanged(ConfigChanged event)
 	{
-		if (!CONFIG_GROUP.equals(event.getGroup()) || !"resetSyncKey".equals(event.getKey()))
+		if (!CONFIG_GROUP.equals(event.getGroup()) || !"showLinkCode".equals(event.getKey()))
 		{
 			return;
 		}
 
-		if (config.resetSyncKey())
+		if (!config.showLinkCode())
 		{
-			configManager.unsetConfiguration(CONFIG_GROUP, SECRET_KEY);
-			forgetSession();
-			// The toggle is really a button, so it puts itself back up rather than sitting on and looking
-			// like a mode the plugin is now in.
-			configManager.setConfiguration(CONFIG_GROUP, "resetSyncKey", false);
-			say("Sync key reset. The next bank you open will claim this character for this install.");
+			return;
 		}
+
+		// The toggle is really a button, so it puts itself back up rather than sitting on and looking like a
+		// mode the plugin is now in.
+		configManager.setConfiguration(CONFIG_GROUP, "showLinkCode", false);
+
+		// The display name is live game state, so it can only be read on the client thread - and this arrives
+		// on Swing's, from the settings panel.
+		clientThread.invoke(() -> requestCode(displayName(), true));
 	}
 
 	/**
@@ -214,18 +219,12 @@ public class OsrsLoadoutPlugin extends Plugin
 	 */
 	private void capture()
 	{
-		if (!config.sync() || nameClaimed)
+		if (!config.sync())
 		{
 			return;
 		}
 
-		final Player local = client.getLocalPlayer();
-		final String rsn = local == null ? null : local.getName();
-		if (rsn == null || rsn.isEmpty())
-		{
-			return;
-		}
-
+		final String rsn = displayName();
 		final TreeSet<Integer> ids = new TreeSet<>();
 
 		// Equipment and inventory are included alongside the bank because the question the site is asking is
@@ -242,13 +241,13 @@ public class OsrsLoadoutPlugin extends Plugin
 			return;
 		}
 
-		if (ids.equals(lastSent) && rsn.equals(lastSentRsn))
+		if (ids.equals(lastSent) && equal(rsn, lastSentRsn))
 		{
 			// Idly reopening the bank is not a request.
 			return;
 		}
 
-		send(rsn, ids);
+		upload(rsn, ids);
 	}
 
 	private void collect(int containerId, Collection<Integer> into)
@@ -283,11 +282,11 @@ public class OsrsLoadoutPlugin extends Plugin
 	 * and a slow or unreachable server costs the player nothing. Nothing is retried here. The next bank is
 	 * the retry, and it arrives on its own.
 	 */
-	private void send(String rsn, Set<Integer> ids)
+	private void upload(@Nullable String rsn, Set<Integer> ids)
 	{
 		final Request request = new Request.Builder()
-			.url(LoadoutLink.ENDPOINT)
-			.post(RequestBody.create(JSON, LoadoutLink.json(gson, rsn, ids, secret())))
+			.url(LoadoutLink.UPLOAD_ENDPOINT)
+			.post(RequestBody.create(JSON, LoadoutLink.uploadJson(gson, rsn, ids, secret())))
 			.build();
 
 		okHttpClient.newCall(request).enqueue(new Callback()
@@ -297,7 +296,7 @@ public class OsrsLoadoutPlugin extends Plugin
 			{
 				// Offline, or the server is down. Silent by design: a chat line every time someone banks
 				// without a connection is worse than not syncing.
-				log.debug("Bank sync failed", e);
+				log.debug("Bank upload failed", e);
 			}
 
 			@Override
@@ -305,46 +304,132 @@ public class OsrsLoadoutPlugin extends Plugin
 			{
 				try (Response r = response)
 				{
-					onResult(rsn, ids, r.code());
+					if (!r.isSuccessful())
+					{
+						log.debug("Bank upload rejected with {}", r.code());
+						return;
+					}
+
+					lastSent = ids;
+					lastSentRsn = rsn;
+					onUploaded(rsn, ids.size());
 				}
 			}
 		});
 	}
 
 	/**
-	 * On an OkHttp dispatcher thread. Everything touched here is either a field this class owns or
-	 * ChatMessageManager#queue, which is an add to a ConcurrentLinkedQueue that the client thread drains.
+	 * On an OkHttp dispatcher thread. The bank is up; the only question left is whether the player still
+	 * needs to be told how to let a browser read it.
 	 */
-	private void onResult(String rsn, Set<Integer> ids, int code)
+	private void onUploaded(@Nullable String rsn, int count)
 	{
-		if (code == 409)
+		if (!linked())
 		{
-			nameClaimed = true;
-			say("This character was first synced from another RuneLite install, so this one cannot update "
-				+ "it. Reset the sync key in the OSRS Loadout settings, here or there, to move it.");
+			// The code and the item count belong on one line, so the count is carried into the pairing call
+			// rather than announced ahead of it.
+			requestCode(rsn, false, count);
 			return;
 		}
-
-		if (code < 200 || code >= 300)
-		{
-			log.debug("Bank sync rejected with {}", code);
-			return;
-		}
-
-		lastSent = ids;
-		lastSentRsn = rsn;
 
 		if (!announced)
 		{
 			announced = true;
-			say("Synced " + ids.size() + " items to osrsloadout.com.");
+			say("Synced " + count + " items.");
+		}
+	}
+
+	private void requestCode(@Nullable String rsn, boolean onDemand)
+	{
+		requestCode(rsn, onDemand, -1);
+	}
+
+	/**
+	 * Mints a single-use code the player types into the website, which is how a browser is granted the right
+	 * to read this bank. Ten minutes, one use, and asking again replaces any unused code.
+	 *
+	 * @param count items just uploaded, or -1 when the player asked for a code rather than this following an
+	 *              upload
+	 */
+	private void requestCode(@Nullable String rsn, boolean onDemand, int count)
+	{
+		final Request request = new Request.Builder()
+			.url(LoadoutLink.PAIR_ENDPOINT)
+			.post(RequestBody.create(JSON, LoadoutLink.pairJson(gson, rsn, secret())))
+			.build();
+
+		okHttpClient.newCall(request).enqueue(new Callback()
+		{
+			@Override
+			public void onFailure(Call call, IOException e)
+			{
+				log.debug("Pair request failed", e);
+				announceWithoutCode(count);
+			}
+
+			@Override
+			public void onResponse(Call call, Response response)
+			{
+				String code = null;
+				try (Response r = response)
+				{
+					final ResponseBody body = r.body();
+					if (r.isSuccessful() && body != null)
+					{
+						code = LoadoutLink.codeFrom(gson, body.string());
+					}
+					else
+					{
+						log.debug("Pair request rejected with {}", r.code());
+					}
+				}
+				catch (IOException e)
+				{
+					log.debug("Could not read pair response", e);
+				}
+
+				if (code == null)
+				{
+					announceWithoutCode(count);
+					return;
+				}
+
+				// Printed exactly as returned, hyphen included. The server picks from an alphabet with no
+				// O/0 and no I/1/l precisely because this gets read off a chat line and typed by hand, so
+				// reformatting it here could only do harm.
+				final String tail = "Type " + code + " at osrsloadout.com to link this browser.";
+				say(count < 0 ? tail : "Synced " + count + " items. " + tail);
+
+				// Only now, with a code actually in front of the player. Setting this when the request was
+				// merely sent would burn their one prompt on a failure they never saw.
+				configManager.setConfiguration(CONFIG_GROUP, LINKED_KEY, true);
+				announced = true;
+
+				if (onDemand)
+				{
+					log.debug("Issued link code on request");
+				}
+			}
+		});
+	}
+
+	/**
+	 * The upload succeeded even though the pairing call did not, so the player is still told their bank
+	 * synced. The linked flag stays down, which means the next bank tries for a code again.
+	 */
+	private void announceWithoutCode(int count)
+	{
+		if (count >= 0 && !announced)
+		{
+			announced = true;
+			say("Synced " + count + " items.");
 		}
 	}
 
 	/**
-	 * There are no accounts: the first install to sync a name claims it, and proves itself afterwards with
-	 * this key. It is generated once, never shown, and never asked for, which is the entire reason the player
-	 * has nothing to set up.
+	 * There are no accounts. This key is the only thing that identifies this bank - the server stores it at
+	 * sha-256 of this value - so it is generated once, never shown, and never asked for. That is the entire
+	 * reason the player has nothing to set up, and the reason a character's name gets you nothing.
 	 */
 	private String secret()
 	{
@@ -354,18 +439,35 @@ public class OsrsLoadoutPlugin extends Plugin
 			return existing;
 		}
 
-		// randomUUID is seeded from SecureRandom, which is what matters here; the hyphens are dropped only so
-		// that what is stored is a plain 32-character token.
+		// randomUUID is seeded from SecureRandom, which is what matters for a value that is the sole
+		// credential here; the hyphens are dropped only so that what is stored is a plain 32-character token.
 		final String generated = UUID.randomUUID().toString().replace("-", "");
 		configManager.setConfiguration(CONFIG_GROUP, SECRET_KEY, generated);
 		return generated;
+	}
+
+	private boolean linked()
+	{
+		return Boolean.parseBoolean(configManager.getConfiguration(CONFIG_GROUP, LINKED_KEY));
+	}
+
+	@Nullable
+	private String displayName()
+	{
+		final Player local = client.getLocalPlayer();
+		final String name = local == null ? null : local.getName();
+		return name == null || name.isEmpty() ? null : name;
+	}
+
+	private static boolean equal(@Nullable String a, @Nullable String b)
+	{
+		return a == null ? b == null : a.equals(b);
 	}
 
 	private void forgetSession()
 	{
 		lastSent = null;
 		lastSentRsn = null;
-		nameClaimed = false;
 		announced = false;
 	}
 

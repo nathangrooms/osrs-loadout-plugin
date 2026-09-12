@@ -1,8 +1,8 @@
 # OSRS Loadout
 
 A RuneLite plugin that syncs your bank to [osrsloadout.com](https://www.osrsloadout.com/). You open a bank,
-it uploads your item ids, and the site knows what you own. There is nothing to paste, nothing to click and
-nothing to set up.
+it uploads your item ids, and the site knows what you own. You type one short code into the website the first
+time; after that there is nothing to paste, nothing to click and nothing to keep doing.
 
 That is the whole plugin. No overlay, no side panel, and it watches nothing except the bank interface
 opening.
@@ -12,23 +12,27 @@ opening.
 1. You open a bank.
 2. The plugin reads your bank, your worn equipment and your inventory, and reduces them to a list of item
    ids.
-3. If that list differs from the last one it sent, it POSTs it to the server with your character's display
-   name.
-4. The first successful sync of a session says so in your chat box. Later ones are silent.
+3. If that list differs from the last one it sent, it uploads it.
+4. The first time, it prints one line in your chat box with a code:
 
-Reopening a bank you have not changed sends nothing at all.
+   > OSRS Loadout: synced 812 items. Type 3XQQ-W3EM at osrsloadout.com to link this browser.
+
+5. You type that code into the website once. After that the site reads your bank on its own, for ever, and
+   the plugin never mentions the code again.
+
+Reopening a bank you have not changed sends nothing at all. Typing the code is the only thing you are ever
+asked to do.
 
 ## What is uploaded
 
-**Your bank is uploaded.** This plugin sends data to a server. Specifically, on each bank open where
-something changed, it sends:
+**Your bank is uploaded.** This plugin sends data to a server. On each bank open where something changed, it
+sends:
 
-- your character's display name,
 - the list of distinct item ids in your bank, worn equipment and inventory,
-- a random key generated on this install, used to prove that this install owns that character's data.
+- a random key generated once on this install,
+- your character's display name, as a label so the site has something to show next to the bank.
 
-It does **not** send quantities, levels, location, chat, your IP beyond the ordinary fact of making an HTTPS
-request, or anything about any other character.
+It does **not** send quantities, levels, location, chat, or anything about any other character.
 
 The destination is a Supabase project run by the owner of osrsloadout.com:
 
@@ -36,26 +40,29 @@ The destination is a Supabase project run by the owner of osrsloadout.com:
 POST https://yqdqbsbgowqjkjplkrzi.supabase.co/functions/v1/bank
 ```
 
-**The result is readable by anyone who knows your character's display name.** There are no accounts and no
-passwords on the site side. This is the same order of exposure as the public hiscores: your name is already
-public, and now the list of items you own is attached to it. If that is not acceptable to you, turn the
-plugin off — it is a real consideration, not a formality.
+### Knowing your character's name gets you nothing
 
-Earlier versions of this plugin put the item list in a URL fragment on your clipboard and uploaded nothing.
-That was more private and more annoying, and it was dropped because a sync you have to perform by hand is a
-sync that stops happening.
+Your bank is stored under the SHA-256 of the random key, and **only** under that. The display name is a
+label, not an address: there is no endpoint that takes a name and returns a bank, so a stranger who knows
+what you are called cannot look you up. That is a deliberate change from an earlier version of this plugin,
+where the name *was* the key and anyone who could type it could read a stranger's gear.
 
-### How the character is claimed
+The key is generated once, stored in your RuneLite config, never displayed and never asked for. It is the
+entire identity of your bank, which is both why there is nothing to set up and why the only way a browser
+gets to read your bank is you typing a code into it.
 
-There are no accounts, so the first install to sync a name claims it. The server stores a SHA-256 of the
-random key that install generated, and every later write for that name has to present the same key.
+There is no account, no email and no password anywhere in this system — not on the site, not in the plugin,
+not on the server.
 
-The key is generated once, stored in your RuneLite config, never displayed and never asked for. That is the
-entire reason there is nothing to set up.
+An earlier version put the item list in a URL fragment on your clipboard and uploaded nothing at all. That
+was more private and more annoying, and it was dropped because a sync you have to perform by hand is a sync
+that stops happening.
 
-If you sync the same character from a second RuneLite install, the server answers `409` and the plugin says
-so once in chat and then stops trying. "Reset sync key" in the plugin settings clears the key on whichever
-install you run it on, letting the other one take the character over.
+### Linking another browser
+
+A code is single-use and lasts ten minutes. If you want a second computer, or you cleared your browser's site
+data, tick **"Show a new link code"** in the plugin settings and a fresh one appears in your chat box.
+Asking for a new code invalidates any unused one.
 
 ## Judgement calls
 
@@ -82,18 +89,26 @@ deleting two lines in `capture()`.
 comparing it is exact, and a hash would introduce a collision that presents as the plugin silently refusing
 to sync — a bug nobody would ever diagnose from inside the game.
 
-**A `409` latches.** If another install owns the name, that is still true on the next bank and the one after.
-The plugin says so once and stops until you log out or reset the key, rather than generating a request and a
-chat line every time you bank.
+**The "linked" flag is only set once a code has actually reached the player.** Setting it when the pairing
+request was merely sent would burn their one prompt on a failure they never saw, leaving them with a synced
+bank and no way to discover the code short of finding the settings item. So a failed pairing call leaves the
+flag down, prints the plain "synced N items" line, and tries again at the next bank.
 
 **Failures are silent.** A dropped connection produces a debug log line and nothing else. The next bank is
 the retry, and it arrives on its own without a timer, a backoff or a queue.
 
-**There is a config, reluctantly.** The Plugin Hub requires that "Plugins which communicate with third party
-servers [...] have a warning either on the plugin, or on the configuration option enabling the setting,
-explaining what data is being sent". The sync toggle exists to carry that disclosure, so it defaults to on.
-The sync key is deliberately not a config item; it is written straight to the config store so it never
-renders in the settings panel.
+**The code is printed exactly as the server returns it.** Its alphabet deliberately has no `O`/`0` and no
+`I`/`1`/`l` because it is read off a chat line and typed into a browser, so reformatting, upper-casing or
+re-hyphenating it here could only introduce a character the server will not accept back.
+
+**There is a config, reluctantly, and it has exactly two items.** The Plugin Hub requires that "Plugins which
+communicate with third party servers [...] have a warning either on the plugin, or on the configuration
+option enabling the setting, explaining what data is being sent". The sync toggle carries that disclosure, so
+it defaults to on. The second item, "Show a new link code", is there because it is the only thing in the
+whole system a player ever has to do and it therefore has to be findable. The secret and the linked flag are
+deliberately *not* config items — they are written straight to the config store so they never render in the
+settings panel, because the secret is the sole credential and there should be nothing to read out or clear
+by accident.
 
 **The HTTP is `enqueue`, not `execute`.** Reading the containers and resolving ids happens on the client
 thread because it must. The request does not: OkHttp dispatches it on its own pool, so an unreachable server

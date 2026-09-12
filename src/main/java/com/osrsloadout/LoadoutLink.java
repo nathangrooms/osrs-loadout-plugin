@@ -25,18 +25,26 @@
 package com.osrsloadout;
 
 import com.google.gson.Gson;
+import com.google.gson.JsonSyntaxException;
 import java.util.Collection;
+import javax.annotation.Nullable;
 
 /**
- * Everything about the link between this install and osrsloadout.com: where the bank goes and what the
- * request body looks like.
+ * Everything about the link between this install and osrsloadout.com: the two endpoints it calls and the
+ * shape of what goes over them.
  *
- * Kept separate from the plugin, and free of RuneLite types, because the request body is the part worth
+ * Kept separate from the plugin, and free of RuneLite types, because the request bodies are the part worth
  * testing and a JSON shape can be asserted without a game client.
+ *
+ * The identity of a bank is the secret, and only the secret. The display name travels with it as a label so
+ * the site has something to show, but it is not a lookup key and nothing here should ever treat it as one:
+ * that is the whole difference between this design and the previous one, where knowing a character's name
+ * was enough to read their bank.
  */
 final class LoadoutLink
 {
-	static final String ENDPOINT = "https://yqdqbsbgowqjkjplkrzi.supabase.co/functions/v1/bank";
+	static final String UPLOAD_ENDPOINT = "https://yqdqbsbgowqjkjplkrzi.supabase.co/functions/v1/bank";
+	static final String PAIR_ENDPOINT = UPLOAD_ENDPOINT + "/pair";
 
 	private LoadoutLink()
 	{
@@ -47,22 +55,51 @@ final class LoadoutLink
 	 * from the game, it can contain a non-breaking space, and hand-built JSON is how a stray quote turns into
 	 * a malformed request nobody can reproduce.
 	 */
-	static String json(Gson gson, String rsn, Collection<Integer> ids, String secret)
+	static String uploadJson(Gson gson, @Nullable String rsn, Collection<Integer> ids, String secret)
 	{
-		return gson.toJson(new Payload(rsn, ids, secret));
+		return gson.toJson(new Upload(rsn, ids, secret));
+	}
+
+	static String pairJson(Gson gson, @Nullable String rsn, String secret)
+	{
+		return gson.toJson(new Pair(rsn, secret));
+	}
+
+	/**
+	 * Returns the pairing code from a /bank/pair response, or null if the body is not what we expect. Null
+	 * rather than an exception because every caller's answer to a malformed response is the same as its
+	 * answer to a network failure: say nothing and let the next bank try again.
+	 */
+	@Nullable
+	static String codeFrom(Gson gson, String body)
+	{
+		try
+		{
+			final PairResponse parsed = gson.fromJson(body, PairResponse.class);
+			if (parsed == null || parsed.code == null || parsed.code.isEmpty())
+			{
+				return null;
+			}
+			return parsed.code;
+		}
+		catch (JsonSyntaxException e)
+		{
+			return null;
+		}
 	}
 
 	/**
 	 * The field names are the wire contract; Gson takes them verbatim. Renaming one silently changes the
-	 * request, which is what the test on this class is guarding.
+	 * request, which is what the test on this class is guarding. A null rsn is omitted rather than sent as
+	 * null, which is what makes the label genuinely optional.
 	 */
-	private static final class Payload
+	private static final class Upload
 	{
 		private final String rsn;
 		private final int[] ids;
 		private final String secret;
 
-		private Payload(String rsn, Collection<Integer> ids, String secret)
+		private Upload(@Nullable String rsn, Collection<Integer> ids, String secret)
 		{
 			this.rsn = rsn;
 			this.secret = secret;
@@ -74,5 +111,23 @@ final class LoadoutLink
 				this.ids[i++] = id;
 			}
 		}
+	}
+
+	private static final class Pair
+	{
+		private final String rsn;
+		private final String secret;
+
+		private Pair(@Nullable String rsn, String secret)
+		{
+			this.rsn = rsn;
+			this.secret = secret;
+		}
+	}
+
+	/** Only {@code code} is read; the server also returns expires_in, which the plugin has no use for. */
+	private static final class PairResponse
+	{
+		private String code;
 	}
 }

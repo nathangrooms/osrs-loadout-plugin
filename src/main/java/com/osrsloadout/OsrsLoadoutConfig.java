@@ -29,15 +29,19 @@ import net.runelite.client.config.ConfigGroup;
 import net.runelite.client.config.ConfigItem;
 
 /**
- * This plugin would rather have had no configuration at all, but the Plugin Hub requires that "Plugins which
- * communicate with third party servers [...] have a warning either on the plugin, or on the configuration
- * option enabling the setting, explaining what data is being sent". That makes the sync toggle below a
- * submission requirement rather than a feature, which is also why it defaults to on: the disclosure has to
- * exist, but the player should not have to go and find it before the plugin does anything.
+ * Two items, and both earn their place.
  *
- * The per-install sync key is deliberately not here. It is written straight to the config store under
- * {@link OsrsLoadoutPlugin#CONFIG_GROUP}, so it never renders in the panel and there is nothing for a player
- * to copy, paste or leak.
+ * The sync toggle is a Plugin Hub submission requirement rather than a feature: plugins which communicate
+ * with third party servers must "have a warning either on the plugin, or on the configuration option
+ * enabling the setting, explaining what data is being sent". It defaults to on so the disclosure exists
+ * without standing between the player and a working plugin.
+ *
+ * The link code button is the only thing in this entire system a player is ever asked to do, so it is the
+ * one thing that has to be findable.
+ *
+ * The secret and the linked flag are deliberately absent. They are written straight to the config store, so
+ * they never render in the settings panel: there is nothing for a player to read out to someone who asks
+ * nicely, and nothing to accidentally clear.
  */
 @ConfigGroup(OsrsLoadoutPlugin.CONFIG_GROUP)
 public interface OsrsLoadoutConfig extends Config
@@ -46,9 +50,10 @@ public interface OsrsLoadoutConfig extends Config
 		keyName = "sync",
 		name = "Sync my bank to osrsloadout.com",
 		description = "Uploads the item ids in your bank, worn equipment and inventory to osrsloadout.com "
-			+ "every time you open a bank, along with your character's display name. Quantities, levels, "
-			+ "location and chat are never sent. Anyone who knows your character name can read the result, "
-			+ "the same way they can read your hiscores. Turn this off to stop uploading.",
+			+ "every time you open a bank, along with your character's display name as a label. Quantities, "
+			+ "levels, location and chat are never sent. Your bank is stored under a key that only this "
+			+ "RuneLite install holds, so it can only be read by a browser you have linked with a code. "
+			+ "Turn this off to stop uploading.",
 		position = 1
 	)
 	default boolean sync()
@@ -57,16 +62,14 @@ public interface OsrsLoadoutConfig extends Config
 	}
 
 	@ConfigItem(
-		keyName = "resetSyncKey",
-		name = "Reset sync key",
-		description = "Forgets the key that proves this RuneLite install owns your character's data, and "
-			+ "generates a new one on the next bank you open. Only useful if you sync the same character "
-			+ "from more than one install and want this one to take over.",
-		warning = "The next install to sync this character claims it. If you do this on the wrong machine "
-			+ "you will have to reset the key on the other one to hand it back.",
+		keyName = "showLinkCode",
+		name = "Show a new link code",
+		description = "Prints a fresh code in your chat box to link another browser to your bank - a second "
+			+ "computer, or the same one after clearing its site data. The code lasts ten minutes and can be "
+			+ "used once. You do not need this for the browser you have already linked.",
 		position = 2
 	)
-	default boolean resetSyncKey()
+	default boolean showLinkCode()
 	{
 		return false;
 	}

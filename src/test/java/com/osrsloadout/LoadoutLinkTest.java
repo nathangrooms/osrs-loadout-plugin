@@ -29,23 +29,31 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.TreeSet;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import org.junit.Test;
 
 /**
  * These assert the wire contract with the server, which is the one thing in this plugin that cannot be
- * checked by the compiler and cannot be seen to be wrong from inside the game: a renamed field or a reordered
- * list just produces a 400 that the plugin is designed to swallow.
+ * checked by the compiler and cannot be seen to be wrong from inside the game: a renamed field or a dropped
+ * secret just produces a 400 that the plugin is designed to swallow.
  */
 public class LoadoutLinkTest
 {
 	private final Gson gson = new Gson();
 
 	@Test
-	public void serialisesTheAgreedFieldNames()
+	public void serialisesTheAgreedUploadFields()
 	{
-		final String json = LoadoutLink.json(gson, "Zezima", new TreeSet<>(Arrays.asList(4151, 11834, 12002)), "abc123");
+		final String json = LoadoutLink.uploadJson(gson, "Zezima", new TreeSet<>(Arrays.asList(4151, 11834, 12002)), "abc123");
 		assertEquals("{\"rsn\":\"Zezima\",\"ids\":[4151,11834,12002],\"secret\":\"abc123\"}", json);
+	}
+
+	@Test
+	public void serialisesTheAgreedPairFields()
+	{
+		assertEquals("{\"rsn\":\"Zezima\",\"secret\":\"abc123\"}", LoadoutLink.pairJson(gson, "Zezima", "abc123"));
 	}
 
 	@Test
@@ -53,8 +61,18 @@ public class LoadoutLinkTest
 	{
 		// The server sorts and de-duplicates anyway, but sending a canonical list is what lets the plugin
 		// compare one capture against the last and skip a request that would change nothing.
-		final String json = LoadoutLink.json(gson, "Zezima", new TreeSet<>(Arrays.asList(12002, 4151, 4151, 11834)), "k");
+		final String json = LoadoutLink.uploadJson(gson, "Zezima", new TreeSet<>(Arrays.asList(12002, 4151, 4151, 11834)), "k");
 		assertTrue(json, json.contains("\"ids\":[4151,11834,12002]"));
+	}
+
+	@Test
+	public void omitsTheLabelWhenThereIsNone()
+	{
+		// The display name is a label, not a key, so it has to be genuinely optional rather than sent as the
+		// string "null" when nobody is logged in.
+		final String json = LoadoutLink.uploadJson(gson, null, Collections.singleton(995), "k");
+		assertFalse(json, json.contains("rsn"));
+		assertTrue(json, json.contains("\"secret\":\"k\""));
 	}
 
 	@Test
@@ -62,15 +80,33 @@ public class LoadoutLinkTest
 	{
 		// A display name arrives from the game, not from us. Gson is here so that a name carrying a quote or
 		// a backslash produces valid JSON rather than a request nobody can reproduce.
-		final String json = LoadoutLink.json(gson, "a\"b\\c", Collections.singleton(995), "k");
+		final String json = LoadoutLink.uploadJson(gson, "a\"b\\c", Collections.singleton(995), "k");
 		assertTrue(json, json.contains("\"rsn\":\"a\\\"b\\\\c\""));
 	}
 
 	@Test
-	public void endpointIsHttps()
+	public void readsThePairingCode()
 	{
-		// The request carries a display name and a shared secret, so plain http would be a downgrade nobody
-		// would notice until it mattered.
-		assertTrue(LoadoutLink.ENDPOINT, LoadoutLink.ENDPOINT.startsWith("https://"));
+		assertEquals("3XQQ-W3EM", LoadoutLink.codeFrom(gson, "{\"code\":\"3XQQ-W3EM\",\"expires_in\":600}"));
+	}
+
+	@Test
+	public void treatsAnUnusablePairResponseAsNoCode()
+	{
+		// Every caller's answer to a malformed body is the same as its answer to a dropped connection, so
+		// these must not throw.
+		assertNull(LoadoutLink.codeFrom(gson, "not json at all"));
+		assertNull(LoadoutLink.codeFrom(gson, "{\"expires_in\":600}"));
+		assertNull(LoadoutLink.codeFrom(gson, "{\"code\":\"\"}"));
+		assertNull(LoadoutLink.codeFrom(gson, ""));
+	}
+
+	@Test
+	public void endpointsAreHttpsAndDistinct()
+	{
+		// The requests carry the only secret in the system, so plain http would be a downgrade nobody would
+		// notice until it mattered.
+		assertTrue(LoadoutLink.UPLOAD_ENDPOINT, LoadoutLink.UPLOAD_ENDPOINT.startsWith("https://"));
+		assertTrue(LoadoutLink.PAIR_ENDPOINT, LoadoutLink.PAIR_ENDPOINT.endsWith("/bank/pair"));
 	}
 }
