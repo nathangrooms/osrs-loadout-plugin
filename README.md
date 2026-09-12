@@ -3,8 +3,9 @@
 A RuneLite plugin that sends your bank to [osrsloadout.com](https://www.osrsloadout.com/), so the site can
 work out the best gear you can actually field from what you own.
 
-**This plugin sends data to a third-party server.** What it sends, when, and what can be done with it is set
-out in full below.
+**This plugin sends data to a third-party server, and is off until you turn it on.** Tick *Sync my bank to
+osrsloadout.com* in its settings to enable it. What it sends, when, and what can be done with it is set out
+in full below.
 
 ## What it does
 
@@ -29,10 +30,13 @@ On each press of Sync, to `https://yqdqbsbgowqjkjplkrzi.supabase.co/functions/v1
 - the distinct item ids in your bank, worn equipment and inventory
 - how many of each you have
 - a random key generated once on this install
-- your character's display name, as a label so the site has something to show beside the bank
+- your character's display name, **only if you also tick *Send my character name as a label***, which is off
+  by default
 
-Requesting a link code additionally POSTs the random key and display name to
+Requesting a link code additionally POSTs the random key (and the display name, under the same opt-in) to
 `.../functions/v1/bank/pair`, which returns the code.
+
+With *Sync* off the plugin makes no requests at all — not the upload, not the pairing call.
 
 It does **not** send levels, location, chat, or anything about any other character.
 

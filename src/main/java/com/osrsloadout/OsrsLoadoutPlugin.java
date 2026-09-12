@@ -176,7 +176,7 @@ public class OsrsLoadoutPlugin extends Plugin
 			@Override
 			public void newCode()
 			{
-				clientThread.invoke(() -> requestCode(displayName(), ON_REQUEST));
+				clientThread.invoke(() -> requestCode(labelName(), ON_REQUEST));
 			}
 
 			@Override
@@ -208,7 +208,8 @@ public class OsrsLoadoutPlugin extends Plugin
 			return;
 		}
 		final String linked = configManager.getConfiguration(CONFIG_GROUP, LINKED_KEY);
-		panel.setLinked(Boolean.parseBoolean(linked), lastSyncAt, lastSyncItems, lastBreakdown[3]);
+		panel.setLinked(Boolean.parseBoolean(linked), lastSyncAt, lastSyncItems, lastBreakdown[3],
+			config.sync());
 		panel.setCode(configManager.getConfiguration(CONFIG_GROUP, LINK_CODE_KEY));
 	}
 
@@ -292,7 +293,7 @@ public class OsrsLoadoutPlugin extends Plugin
 			return;
 		}
 
-		final String rsn = displayName();
+		final String rsn = labelName();
 		final TreeMap<Integer, Long> items = new TreeMap<>();
 		if (!read(items))
 		{
@@ -718,6 +719,17 @@ public class OsrsLoadoutPlugin extends Plugin
 	private boolean linked()
 	{
 		return Boolean.parseBoolean(configManager.getConfiguration(CONFIG_GROUP, LINKED_KEY));
+	}
+
+	/**
+	 * The label, or nothing. "No exposing player information over HTTP" is a Plugin Hub rule, and the name
+	 * is only ever a caption on a web page here - the bank is addressed by the key, never by the name - so
+	 * it is a second, separate opt-in rather than a passenger on the first.
+	 */
+	@Nullable
+	private String labelName()
+	{
+		return config.sendName() ? displayName() : null;
 	}
 
 	@Nullable

@@ -158,7 +158,7 @@ class OsrsLoadoutPanel extends PluginPanel
 		body.add(row(help));
 
 		add(body, BorderLayout.NORTH);
-		setLinked(false, null, 0, 0);
+		setLinked(false, null, 0, 0, false);
 		setCode(null);
 	}
 
@@ -221,13 +221,18 @@ class OsrsLoadoutPanel extends PluginPanel
 	 * @param when         a human-readable time of the last successful upload, or null
 	 * @param items        how many items that upload carried
 	 * @param placeholders how many bank slots were ignored as placeholders
+	 * @param syncEnabled  whether the plugin is allowed to talk to the server at all
 	 */
-	void setLinked(boolean linked, String when, int items, int placeholders)
+	void setLinked(boolean linked, String when, int items, int placeholders, boolean syncEnabled)
 	{
 		SwingUtilities.invokeLater(() -> {
-			status.setText(linked ? "Linked" : "Not linked yet");
-			status.setForeground(linked ? GOOD : ColorScheme.PROGRESS_INPROGRESS_COLOR);
-			detail.setText(when == null
+			status.setText(!syncEnabled ? "Syncing off" : linked ? "Linked" : "Not linked yet");
+			status.setForeground(!syncEnabled ? ColorScheme.LIGHT_GRAY_COLOR
+				: linked ? GOOD : ColorScheme.PROGRESS_INPROGRESS_COLOR);
+			detail.setText(!syncEnabled
+				? "Syncing is off. Tick \"Sync my bank to osrsloadout.com\" in this plugin's settings to "
+					+ "turn it on."
+				: when == null
 				? "No bank read yet. Open one in game, then press Sync."
 				: items + " items at " + when
 					+ (placeholders > 0 ? ", " + placeholders + " placeholders ignored" : ""));
