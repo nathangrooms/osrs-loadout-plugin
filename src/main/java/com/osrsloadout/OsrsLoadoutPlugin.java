@@ -291,42 +291,16 @@ public class OsrsLoadoutPlugin extends Plugin
 			return;
 		}
 
-		switch (event.getKey())
+		// One thing only. The actions live in the panel, where a button can be a button; this is the
+		// door to it, because a settings screen that mentions a panel and cannot open it is a dead end.
+		if ("openPanel".equals(event.getKey()) && config.openPanel())
 		{
-			case "resync":
-				if (config.resync())
-				{
-					release("resync");
-					// Reading containers and the display name is client thread work, and this arrives on
-					// Swing's, from the settings panel.
-					clientThread.invoke(this::resync);
-				}
-				break;
-
-			case "showLinkCode":
-				if (config.showLinkCode())
-				{
-					release("showLinkCode");
-					clientThread.invoke(() -> requestCode(displayName(), ON_REQUEST));
-				}
-				break;
-
-			case "resetSyncKey":
-				if (config.resetSyncKey())
-				{
-					release("resetSyncKey");
-					rotateKey();
-				}
-				break;
-
-			default:
-				break;
+			configManager.setConfiguration(CONFIG_GROUP, "openPanel", false);
+			if (navButton != null)
+			{
+				clientToolbar.openPanel(navButton);
+			}
 		}
-	}
-
-	private void release(String key)
-	{
-		configManager.setConfiguration(CONFIG_GROUP, key, false);
 	}
 
 	/**

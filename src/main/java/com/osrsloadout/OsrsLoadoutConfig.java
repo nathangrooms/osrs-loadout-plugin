@@ -27,49 +27,28 @@ package com.osrsloadout;
 import net.runelite.client.config.Config;
 import net.runelite.client.config.ConfigGroup;
 import net.runelite.client.config.ConfigItem;
-import net.runelite.client.config.ConfigSection;
 
 /**
- * One toggle and three actions, and each earns its place.
+ * One toggle, and nothing else.
+ *
+ * Everything you can DO is in the panel; the one thing you can SET is here. Splitting them this way is
+ * deliberate: RuneLite renders a config item as whatever its return type suggests, so an action has to ship
+ * as a checkbox that unticks itself, and three of those stacked up read as settings somebody forgot to turn
+ * on. But controls in two places is worse than controls in the wrong one, so this file keeps exactly the
+ * item that is genuinely a preference.
  *
  * The sync toggle is a Plugin Hub submission requirement rather than a feature: plugins which communicate
  * with third party servers must "have a warning either on the plugin, or on the configuration option
  * enabling the setting, explaining what data is being sent". It defaults to on so the disclosure exists
  * without standing between the player and a working plugin.
  *
- * The three actions are the only things in the whole system a player can ever be asked to do, which is
- * exactly why they have to be findable rather than clever.
- *
- * The secret and the linked flag are deliberately absent. They are written straight to the config store, so
- * they never render in the settings panel: the secret is the sole credential here, so there is nothing for a
- * player to read out to someone who asks nicely, and nothing to clear by accident.
+ * The secret, the linked flag and the current link code are written straight to the config store, so they
+ * never render here: the secret is the sole credential in this system, so there is nothing for a player to
+ * read out to somebody who asks nicely, and nothing to clear by accident.
  */
 @ConfigGroup(OsrsLoadoutPlugin.CONFIG_GROUP)
 public interface OsrsLoadoutConfig extends Config
 {
-	@ConfigSection(
-		name = "Setting up",
-		description = "Open a bank. A code appears below and in your chat box. Type it once at "
-			+ "osrsloadout.com and this browser is linked for good - after that every bank you open "
-			+ "updates the site on its own and there is nothing here to press.",
-		position = 0
-	)
-	String setup = "setup";
-
-	@ConfigItem(
-		keyName = "linkCode",
-		name = "Link code",
-		description = "Type this at osrsloadout.com to link a browser to your bank. It appears here and "
-			+ "in your chat box whenever one is issued, lasts ten minutes and works once. You never need "
-			+ "it again for a browser that is already linked.",
-		section = setup,
-		position = 0
-	)
-	default String linkCode()
-	{
-		return "";
-	}
-
 	@ConfigItem(
 		keyName = "sync",
 		name = "Sync my bank to osrsloadout.com",
@@ -77,7 +56,9 @@ public interface OsrsLoadoutConfig extends Config
 			+ "every time you open a bank, along with how many of each you have and your character's "
 			+ "display name as a label. Levels, location and chat are never sent. Your bank is stored under "
 			+ "a key that only this RuneLite install holds, so it can only be read by a browser you have "
-			+ "linked with a code. Turn this off to stop uploading.",
+			+ "linked with a code. Turn this off to stop uploading."
+			+ "<br><br>The link code, the sync button and the rest are in the OSRS Loadout panel, on the "
+			+ "toolbar to the right.",
 		position = 1
 	)
 	default boolean sync()
@@ -86,44 +67,14 @@ public interface OsrsLoadoutConfig extends Config
 	}
 
 	@ConfigItem(
-		keyName = "resync",
-		name = "Tick to re-sync my bank now",
-		description = "Uploads your bank again immediately, even if nothing has changed since the last "
-			+ "upload. Use this if the website is showing gear you no longer have, or you think a sync was "
-			+ "missed. If no bank is open it re-sends the last one this plugin saw.",
+		keyName = "openPanel",
+		name = "Tick to open the OSRS Loadout panel",
+		description = "Opens the panel where the link code, the sync button and the rest live. It is also "
+			+ "the icon on the toolbar to the right of the screen - this is here because a settings screen "
+			+ "that mentions a panel and cannot take you to it is a dead end.",
 		position = 2
 	)
-	default boolean resync()
-	{
-		return false;
-	}
-
-	@ConfigItem(
-		keyName = "showLinkCode",
-		name = "Tick to show a new link code",
-		description = "Prints a fresh code in your chat box to link another browser to your bank - a second "
-			+ "computer, or the same one after clearing its site data. The code lasts ten minutes and can be "
-			+ "used once, and asking for one cancels any code you have not used yet. You do not need this "
-			+ "for a browser you have already linked.",
-		position = 3
-	)
-	default boolean showLinkCode()
-	{
-		return false;
-	}
-
-	@ConfigItem(
-		keyName = "resetSyncKey",
-		name = "Tick to reset my sync key",
-		description = "Generates a brand new key for this install, which moves your bank to a new address "
-			+ "and unlinks every browser you have ever linked. This is the real way to revoke access: "
-			+ "unlinking inside the website only makes that browser forget, while this makes the old address "
-			+ "stop working for everyone. You will need to link each browser again with a new code.",
-		warning = "This unlinks every browser that can currently see your bank, on every device, and cannot "
-			+ "be undone. You will need a new code for each one.",
-		position = 4
-	)
-	default boolean resetSyncKey()
+	default boolean openPanel()
 	{
 		return false;
 	}
