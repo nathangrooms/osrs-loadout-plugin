@@ -38,6 +38,10 @@ import net.runelite.api.ChatMessageType;
 import net.runelite.api.Client;
 import net.runelite.api.GameState;
 import net.runelite.api.Item;
+import java.awt.image.BufferedImage;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
+import net.runelite.api.ItemComposition;
 import net.runelite.api.ItemContainer;
 import net.runelite.api.Player;
 import net.runelite.api.ScriptID;
@@ -116,6 +120,9 @@ public class OsrsLoadoutPlugin extends Plugin
 	@Inject
 	private Gson gson;
 
+	@Inject
+	private net.runelite.client.ui.ClientToolbar clientToolbar;
+
 	/**
 	 * Set when the bank interface loads, cleared once we have read it. This is the whole debounce: the bank
 	 * finishes building on every tab switch, every search keystroke and every withdrawal, and we want at most
@@ -142,6 +149,12 @@ public class OsrsLoadoutPlugin extends Plugin
 
 	private boolean announced;
 
+	private OsrsLoadoutPanel panel;
+	private net.runelite.client.ui.NavigationButton navButton;
+	/** What the last successful read found, for the panel to report rather than the player to guess. */
+	private String lastSyncAt;
+	private int lastSyncItems;
+
 	@Provides
 	OsrsLoadoutConfig provideConfig(ConfigManager configManager)
 	{
@@ -149,8 +162,66 @@ public class OsrsLoadoutPlugin extends Plugin
 	}
 
 	@Override
+	protected void startUp()
+	{
+		// Actions rather than checkboxes, because the settings panel has no type that is a button, and
+		// three ticks that untick themselves is not a control surface.
+		panel = new OsrsLoadoutPanel(new OsrsLoadoutPanel.Actions()
+		{
+			@Override
+			public void syncNow()
+			{
+				clientThread.invoke(OsrsLoadoutPlugin.this::resync);
+			}
+
+			@Override
+			public void newCode()
+			{
+				clientThread.invoke(() -> requestCode(displayName(), ON_REQUEST));
+			}
+
+			@Override
+			public void resetKey()
+			{
+				rotateKey();
+			}
+		});
+		navButton = net.runelite.client.ui.NavigationButton.builder()
+			.tooltip("OSRS Loadout")
+			.icon(icon())
+			.priority(7)
+			.panel(panel)
+			.build();
+		clientToolbar.addNavigation(navButton);
+		refreshPanel();
+	}
+
+	private BufferedImage icon()
+	{
+		return net.runelite.client.util.ImageUtil.loadImageResource(getClass(), "icon.png");
+	}
+
+	/** Everything the panel shows, in one place, so no caller has to remember which parts to update. */
+	private void refreshPanel()
+	{
+		if (panel == null)
+		{
+			return;
+		}
+		final String linked = configManager.getConfiguration(CONFIG_GROUP, LINKED_KEY);
+		panel.setLinked(Boolean.parseBoolean(linked), lastSyncAt, lastSyncItems, lastBreakdown[3]);
+		panel.setCode(configManager.getConfiguration(CONFIG_GROUP, LINK_CODE_KEY));
+	}
+
+	@Override
 	protected void shutDown()
 	{
+		if (navButton != null)
+		{
+			clientToolbar.removeNavigation(navButton);
+			navButton = null;
+			panel = null;
+		}
 		pendingCapture = false;
 		lastCaptured = null;
 		lastCapturedRsn = null;
@@ -381,15 +452,29 @@ public class OsrsLoadoutPlugin extends Plugin
 			final int id = item.getId();
 			final int quantity = item.getQuantity();
 
-			// A placeholder is stored in the bank as the item with a quantity of zero. The player does not
-			// own it, so sending it would make the planner claim gear they have already spent. Filtering on
-			// quantity catches this and the empty slots the container reports, in one condition.
+			// Empty slots, and the filler the bank uses to pad a tab.
 			if (id <= 0 || quantity <= 0 || id == ItemID.BANK_FILLER)
 			{
 				if (id > 0 && id != ItemID.BANK_FILLER)
 				{
 					lastBreakdown[3]++;
 				}
+				continue;
+			}
+
+			// A placeholder is a bank slot holding the SHAPE of an item you no longer have. This used to be
+			// filtered on quantity, on the reasoning that a placeholder is stored with zero of the item -
+			// and that filter demonstrably did not catch them: a player with an Armadyl crossbow placeholder
+			// and no Armadyl crossbow was credited with one on the website.
+			//
+			// The composition says so outright, and it is the same field canonicalize() reads to fold a
+			// placeholder onto the real item. That is exactly why this was invisible rather than obvious:
+			// by the time the id leaves this loop it is the genuine article's id, indistinguishable from
+			// owning one. So the question has to be asked before that, of the id the game actually gave us.
+			final ItemComposition comp = itemManager.getItemComposition(id);
+			if (comp.getPlaceholderTemplateId() != -1)
+			{
+				lastBreakdown[3]++;
 				continue;
 			}
 			lastBreakdown[slot]++;
@@ -456,6 +541,10 @@ public class OsrsLoadoutPlugin extends Plugin
 
 					lastSent = items;
 					lastSentRsn = rsn;
+					lastSyncItems = items.size();
+					lastSyncAt = DateTimeFormatter.ofPattern("HH:mm")
+						.withZone(ZoneId.systemDefault()).format(java.time.Instant.now());
+					refreshPanel();
 					onUploaded(rsn, items.size(), manual);
 				}
 			}
@@ -563,6 +652,7 @@ public class OsrsLoadoutPlugin extends Plugin
 				// there is nowhere else in RuneLite to read it back. Config items are the only thing a
 				// plugin can put in that panel, so the code is one: a text field you can select and copy.
 				configManager.setConfiguration(CONFIG_GROUP, LINK_CODE_KEY, code);
+				refreshPanel();
 
 				// Only now, with a code actually in front of the player. Setting this when the request was
 				// merely sent would burn their one prompt on a failure they never saw.
@@ -606,8 +696,22 @@ public class OsrsLoadoutPlugin extends Plugin
 		// the very upload that fills it.
 		forgetUploads();
 
-		say("Sync key reset. Every linked browser is now unlinked. Open a bank, or use \"Re-sync my bank "
-			+ "now\", to upload again and get a fresh code.");
+		say("Sync key reset. Every linked browser is now unlinked.");
+		refreshPanel();
+
+		// One action, not two. Resetting and then being told to go and do a second thing is how a control
+		// ends up feeling half-connected: if there is a bank to re-send, this finishes the job and comes
+		// back with the new code already on screen.
+		clientThread.invoke(() -> {
+			if (lastCaptured != null && !lastCaptured.isEmpty())
+			{
+				upload(lastCapturedRsn, lastCaptured, true);
+			}
+			else
+			{
+				say("Open a bank to upload it to the new address and get a fresh code.");
+			}
+		});
 	}
 
 	/**
