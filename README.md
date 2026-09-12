@@ -55,6 +55,14 @@ The key is generated once from `UUID.randomUUID()`, which Java specifies to use 
 generator, giving 122 random bits stored as 32 hex characters. It is kept in your RuneLite config, never
 displayed and never asked for.
 
+### One key per install, not per character
+
+The key is stored in your RuneLite config, not against a character, so every character you play on
+this install shares one bank on the server: syncing an alt replaces what your main last uploaded. That
+is a deliberate simplification for a first release and not a good one — per-character keys are the
+next thing to change — but while it is true it is worth knowing, both because it loses the previous
+bank and because it means the server can see that those characters share an install.
+
 ### What each secret is worth if it leaks
 
 | | what it is | what it lets someone do |
