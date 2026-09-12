@@ -85,6 +85,7 @@ public class OsrsLoadoutPlugin extends Plugin
 	 */
 	private static final String SECRET_KEY = "syncKey";
 	private static final String LINKED_KEY = "linked";
+	private static final String LINK_CODE_KEY = "linkCode";
 
 	private static final MediaType JSON = MediaType.parse("application/json");
 
@@ -529,6 +530,11 @@ public class OsrsLoadoutPlugin extends Plugin
 				final String tail = "Type " + code + " at osrsloadout.com to link this browser.";
 				say(count == ON_REQUEST ? tail : "Synced " + count + " items. " + tail);
 
+				// And in the panel, because a chat line scrolls away while you are finding the website and
+				// there is nowhere else in RuneLite to read it back. Config items are the only thing a
+				// plugin can put in that panel, so the code is one: a text field you can select and copy.
+				configManager.setConfiguration(CONFIG_GROUP, LINK_CODE_KEY, code);
+
 				// Only now, with a code actually in front of the player. Setting this when the request was
 				// merely sent would burn their one prompt on a failure they never saw.
 				configManager.setConfiguration(CONFIG_GROUP, LINKED_KEY, true);
@@ -565,6 +571,7 @@ public class OsrsLoadoutPlugin extends Plugin
 	{
 		configManager.unsetConfiguration(CONFIG_GROUP, SECRET_KEY);
 		configManager.unsetConfiguration(CONFIG_GROUP, LINKED_KEY);
+		configManager.unsetConfiguration(CONFIG_GROUP, LINK_CODE_KEY);
 
 		// The new address holds nothing, so the memo of what the old one already had would otherwise suppress
 		// the very upload that fills it.

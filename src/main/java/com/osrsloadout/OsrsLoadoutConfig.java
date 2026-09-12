@@ -27,6 +27,7 @@ package com.osrsloadout;
 import net.runelite.client.config.Config;
 import net.runelite.client.config.ConfigGroup;
 import net.runelite.client.config.ConfigItem;
+import net.runelite.client.config.ConfigSection;
 
 /**
  * One toggle and three actions, and each earns its place.
@@ -46,6 +47,29 @@ import net.runelite.client.config.ConfigItem;
 @ConfigGroup(OsrsLoadoutPlugin.CONFIG_GROUP)
 public interface OsrsLoadoutConfig extends Config
 {
+	@ConfigSection(
+		name = "Setting up",
+		description = "Open a bank. A code appears below and in your chat box. Type it once at "
+			+ "osrsloadout.com and this browser is linked for good - after that every bank you open "
+			+ "updates the site on its own and there is nothing here to press.",
+		position = 0
+	)
+	String setup = "setup";
+
+	@ConfigItem(
+		keyName = "linkCode",
+		name = "Link code",
+		description = "Type this at osrsloadout.com to link a browser to your bank. It appears here and "
+			+ "in your chat box whenever one is issued, lasts ten minutes and works once. You never need "
+			+ "it again for a browser that is already linked.",
+		section = setup,
+		position = 0
+	)
+	default String linkCode()
+	{
+		return "";
+	}
+
 	@ConfigItem(
 		keyName = "sync",
 		name = "Sync my bank to osrsloadout.com",
@@ -63,7 +87,7 @@ public interface OsrsLoadoutConfig extends Config
 
 	@ConfigItem(
 		keyName = "resync",
-		name = "Re-sync my bank now",
+		name = "Tick to re-sync my bank now",
 		description = "Uploads your bank again immediately, even if nothing has changed since the last "
 			+ "upload. Use this if the website is showing gear you no longer have, or you think a sync was "
 			+ "missed. If no bank is open it re-sends the last one this plugin saw.",
@@ -76,7 +100,7 @@ public interface OsrsLoadoutConfig extends Config
 
 	@ConfigItem(
 		keyName = "showLinkCode",
-		name = "Show a new link code",
+		name = "Tick to show a new link code",
 		description = "Prints a fresh code in your chat box to link another browser to your bank - a second "
 			+ "computer, or the same one after clearing its site data. The code lasts ten minutes and can be "
 			+ "used once, and asking for one cancels any code you have not used yet. You do not need this "
@@ -90,7 +114,7 @@ public interface OsrsLoadoutConfig extends Config
 
 	@ConfigItem(
 		keyName = "resetSyncKey",
-		name = "Reset sync key",
+		name = "Tick to reset my sync key",
 		description = "Generates a brand new key for this install, which moves your bank to a new address "
 			+ "and unlinks every browser you have ever linked. This is the real way to revoke access: "
 			+ "unlinking inside the website only makes that browser forget, while this makes the old address "
