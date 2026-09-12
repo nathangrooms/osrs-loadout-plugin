@@ -29,19 +29,19 @@ import net.runelite.client.config.ConfigGroup;
 import net.runelite.client.config.ConfigItem;
 
 /**
- * Two items, and both earn their place.
+ * One toggle and three actions, and each earns its place.
  *
  * The sync toggle is a Plugin Hub submission requirement rather than a feature: plugins which communicate
  * with third party servers must "have a warning either on the plugin, or on the configuration option
  * enabling the setting, explaining what data is being sent". It defaults to on so the disclosure exists
  * without standing between the player and a working plugin.
  *
- * The link code button is the only thing in this entire system a player is ever asked to do, so it is the
- * one thing that has to be findable.
+ * The three actions are the only things in the whole system a player can ever be asked to do, which is
+ * exactly why they have to be findable rather than clever.
  *
  * The secret and the linked flag are deliberately absent. They are written straight to the config store, so
- * they never render in the settings panel: there is nothing for a player to read out to someone who asks
- * nicely, and nothing to accidentally clear.
+ * they never render in the settings panel: the secret is the sole credential here, so there is nothing for a
+ * player to read out to someone who asks nicely, and nothing to clear by accident.
  */
 @ConfigGroup(OsrsLoadoutPlugin.CONFIG_GROUP)
 public interface OsrsLoadoutConfig extends Config
@@ -62,14 +62,44 @@ public interface OsrsLoadoutConfig extends Config
 	}
 
 	@ConfigItem(
+		keyName = "resync",
+		name = "Re-sync my bank now",
+		description = "Uploads your bank again immediately, even if nothing has changed since the last "
+			+ "upload. Use this if the website is showing gear you no longer have, or you think a sync was "
+			+ "missed. If no bank is open it re-sends the last one this plugin saw.",
+		position = 2
+	)
+	default boolean resync()
+	{
+		return false;
+	}
+
+	@ConfigItem(
 		keyName = "showLinkCode",
 		name = "Show a new link code",
 		description = "Prints a fresh code in your chat box to link another browser to your bank - a second "
 			+ "computer, or the same one after clearing its site data. The code lasts ten minutes and can be "
-			+ "used once. You do not need this for the browser you have already linked.",
-		position = 2
+			+ "used once, and asking for one cancels any code you have not used yet. You do not need this "
+			+ "for a browser you have already linked.",
+		position = 3
 	)
 	default boolean showLinkCode()
+	{
+		return false;
+	}
+
+	@ConfigItem(
+		keyName = "resetSyncKey",
+		name = "Reset sync key",
+		description = "Generates a brand new key for this install, which moves your bank to a new address "
+			+ "and unlinks every browser you have ever linked. This is the real way to revoke access: "
+			+ "unlinking inside the website only makes that browser forget, while this makes the old address "
+			+ "stop working for everyone. You will need to link each browser again with a new code.",
+		warning = "This unlinks every browser that can currently see your bank, on every device, and cannot "
+			+ "be undone. You will need a new code for each one.",
+		position = 4
+	)
+	default boolean resetSyncKey()
 	{
 		return false;
 	}

@@ -47,9 +47,11 @@ label, not an address: there is no endpoint that takes a name and returns a bank
 what you are called cannot look you up. That is a deliberate change from an earlier version of this plugin,
 where the name *was* the key and anyone who could type it could read a stranger's gear.
 
-The key is generated once, stored in your RuneLite config, never displayed and never asked for. It is the
-entire identity of your bank, which is both why there is nothing to set up and why the only way a browser
-gets to read your bank is you typing a code into it.
+The key is generated once from `UUID.randomUUID()`, which Java specifies to use a cryptographically strong
+generator — `java.security.SecureRandom` — giving 122 random bits stored as 32 hex characters. It is kept in
+your RuneLite config, never displayed and never asked for. It is the entire identity of your bank, which is
+both why there is nothing to set up and why the only way a browser gets to read your bank is you typing a
+code into it.
 
 There is no account, no email and no password anywhere in this system — not on the site, not in the plugin,
 not on the server.
@@ -58,11 +60,39 @@ An earlier version put the item list in a URL fragment on your clipboard and upl
 was more private and more annoying, and it was dropped because a sync you have to perform by hand is a sync
 that stops happening.
 
-### Linking another browser
+### A linked browser can read your bank, never write one
 
-A code is single-use and lasts ten minutes. If you want a second computer, or you cleared your browser's site
-data, tick **"Show a new link code"** in the plugin settings and a fresh one appears in your chat box.
-Asking for a new code invalidates any unused one.
+Typing a code in gives that browser a **read** id, not the secret. The secret never leaves your RuneLite
+install. So a browser you linked and later lost — a stolen phone, a shared machine — can look at your gear
+and can never overwrite it, and cannot be used to touch anybody else's.
+
+Codes are eight characters from a 31-letter alphabet, single use, ten minutes. Guessing is rate limited at
+the server: twelve wrong attempts from one address in fifteen minutes and it stops answering with `429`, with
+a success clearing the count.
+
+### Linking more than one browser
+
+Ask for a code once per browser, one after another: link the first, then tick the option again for the
+second. There is deliberately no way to have two live codes at once — asking for a code retires any unused
+one, so only ever one door is open.
+
+## The three buttons
+
+Everything else is automatic. These are in the plugin's settings for the three moments it isn't.
+
+**Re-sync my bank now** uploads again immediately even if nothing changed. It is for when you can see the
+site is wrong — stale gear, a sync that failed while you were offline. Without it the only way to force an
+upload would be to go and change your bank, which is the kind of workaround that makes people stop trusting a
+tool. If a bank is open it re-reads it; if not it re-sends the last bank it saw this session, and if it has
+not seen one it says so rather than doing nothing quietly.
+
+**Show a new link code** prints a fresh code, for a second computer or a browser whose site data you cleared.
+
+**Reset sync key** is the real revoke. Unlinking inside the website only makes that browser forget the id it
+is holding — the id itself keeps working for anyone who has it. Resetting the key generates a new secret,
+which moves your bank to a different address and makes every id ever handed out against the old one stop
+resolving. It unlinks every browser on every device at once and cannot be undone, so each one needs a new
+code afterwards.
 
 ## Judgement calls
 
@@ -101,14 +131,29 @@ the retry, and it arrives on its own without a timer, a backoff or a queue.
 `I`/`1`/`l` because it is read off a chat line and typed into a browser, so reformatting, upper-casing or
 re-hyphenating it here could only introduce a character the server will not accept back.
 
-**There is a config, reluctantly, and it has exactly two items.** The Plugin Hub requires that "Plugins which
+**A read with no bank container returns nothing, rather than what it found.** Worn equipment and the
+inventory are readable the moment you log in, but the bank is not. Had the read simply returned whatever it
+could see, pressing "Re-sync my bank now" before opening a bank would have uploaded the thirty items the
+player happens to be carrying *as* their bank, silently replacing a real one on the server. So the bank
+container is a precondition for the whole read, not one of three optional sources.
+
+**Re-sync re-reads instead of trusting the memo.** If the bank is open the player may be several withdrawals
+past the last capture, and re-sending a set they can see is stale would be worse than useless given the
+button exists precisely for people who doubt the sync. The memo is the fallback for a closed bank, not the
+source.
+
+**Re-sync and the automatic sync differ on silence.** A failed upload nobody asked for stays silent, because
+a chat line every time someone banks offline is worse than not syncing. A failed upload they pressed a button
+for says so, because they are waiting for an answer.
+
+**There is a config, reluctantly, and it has four items.** The Plugin Hub requires that "Plugins which
 communicate with third party servers [...] have a warning either on the plugin, or on the configuration
 option enabling the setting, explaining what data is being sent". The sync toggle carries that disclosure, so
-it defaults to on. The second item, "Show a new link code", is there because it is the only thing in the
-whole system a player ever has to do and it therefore has to be findable. The secret and the linked flag are
-deliberately *not* config items — they are written straight to the config store so they never render in the
-settings panel, because the secret is the sole credential and there should be nothing to read out or clear
-by accident.
+it defaults to on. The other three are actions rather than settings, and each exists for a moment the
+automatic path cannot cover: the site looks wrong, another browser needs linking, or access needs revoking.
+The secret and the linked flag are deliberately *not* config items — they are written straight to the config
+store so they never render in the settings panel, because the secret is the sole credential and there should
+be nothing to read out or clear by accident.
 
 **The HTTP is `enqueue`, not `execute`.** Reading the containers and resolving ids happens on the client
 thread because it must. The request does not: OkHttp dispatches it on its own pool, so an unreachable server

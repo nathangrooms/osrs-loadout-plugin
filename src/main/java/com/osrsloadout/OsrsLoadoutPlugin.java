@@ -123,9 +123,17 @@ public class OsrsLoadoutPlugin extends Plugin
 	private boolean pendingCapture;
 
 	/**
-	 * The last set of ids accepted by the server, and the label that went with it. A hash would do, but the
-	 * set itself is about four kilobytes for a full bank and comparing it is exact, so there is no reason to
-	 * introduce a collision that would present as the plugin silently refusing to sync.
+	 * The most recent set read out of a bank, whether or not the upload that followed it succeeded. This is
+	 * what a manual re-sync falls back on when no bank is open, and it is deliberately separate from
+	 * lastSent: an upload that failed still leaves us something to re-send.
+	 */
+	private Set<Integer> lastCaptured;
+	private String lastCapturedRsn;
+
+	/**
+	 * The last set the server accepted. A hash would do, but the set itself is about four kilobytes for a
+	 * full bank and comparing it is exact, so there is no reason to introduce a collision that would present
+	 * as the plugin silently refusing to sync.
 	 */
 	private Set<Integer> lastSent;
 	private String lastSentRsn;
@@ -142,7 +150,9 @@ public class OsrsLoadoutPlugin extends Plugin
 	protected void shutDown()
 	{
 		pendingCapture = false;
-		forgetSession();
+		lastCaptured = null;
+		lastCapturedRsn = null;
+		forgetUploads();
 	}
 
 	/**
@@ -155,7 +165,9 @@ public class OsrsLoadoutPlugin extends Plugin
 	{
 		if (event.getGameState() == GameState.LOGIN_SCREEN)
 		{
-			forgetSession();
+			lastCaptured = null;
+			lastCapturedRsn = null;
+			forgetUploads();
 		}
 	}
 
@@ -193,26 +205,55 @@ public class OsrsLoadoutPlugin extends Plugin
 		capture();
 	}
 
+	/**
+	 * The three actions all arrive here. Each is a toggle pretending to be a button, so each puts itself back
+	 * up rather than sitting on and looking like a mode the plugin is now in - and because writing the key
+	 * back re-enters this method, every branch is guarded on the value still being true.
+	 */
 	@Subscribe
 	public void onConfigChanged(ConfigChanged event)
 	{
-		if (!CONFIG_GROUP.equals(event.getGroup()) || !"showLinkCode".equals(event.getKey()))
+		if (!CONFIG_GROUP.equals(event.getGroup()))
 		{
 			return;
 		}
 
-		if (!config.showLinkCode())
+		switch (event.getKey())
 		{
-			return;
+			case "resync":
+				if (config.resync())
+				{
+					release("resync");
+					// Reading containers and the display name is client thread work, and this arrives on
+					// Swing's, from the settings panel.
+					clientThread.invoke(this::resync);
+				}
+				break;
+
+			case "showLinkCode":
+				if (config.showLinkCode())
+				{
+					release("showLinkCode");
+					clientThread.invoke(() -> requestCode(displayName(), ON_REQUEST));
+				}
+				break;
+
+			case "resetSyncKey":
+				if (config.resetSyncKey())
+				{
+					release("resetSyncKey");
+					rotateKey();
+				}
+				break;
+
+			default:
+				break;
 		}
+	}
 
-		// The toggle is really a button, so it puts itself back up rather than sitting on and looking like a
-		// mode the plugin is now in.
-		configManager.setConfiguration(CONFIG_GROUP, "showLinkCode", false);
-
-		// The display name is live game state, so it can only be read on the client thread - and this arrives
-		// on Swing's, from the settings panel.
-		clientThread.invoke(() -> requestCode(displayName(), ON_REQUEST));
+	private void release(String key)
+	{
+		configManager.setConfiguration(CONFIG_GROUP, key, false);
 	}
 
 	/**
@@ -229,20 +270,13 @@ public class OsrsLoadoutPlugin extends Plugin
 
 		final String rsn = displayName();
 		final TreeSet<Integer> ids = new TreeSet<>();
-
-		// Equipment and inventory are included alongside the bank because the question the site is asking is
-		// "what do you own", and a player's best items are usually the ones they are wearing. A bank-only
-		// read would tell the planner you do not own your own gear, which is the one thing it must not get
-		// wrong. It costs nothing: same trigger, same pass, same request.
-		collect(InventoryID.BANK, ids);
-		collect(InventoryID.WORN, ids);
-		collect(InventoryID.INV, ids);
-
-		if (ids.isEmpty())
+		if (!read(ids))
 		{
-			// The server rejects an empty list, so there is nothing to gain by asking it to.
 			return;
 		}
+
+		lastCaptured = ids;
+		lastCapturedRsn = rsn;
 
 		if (ids.equals(lastSent) && equal(rsn, lastSentRsn))
 		{
@@ -250,12 +284,79 @@ public class OsrsLoadoutPlugin extends Plugin
 			return;
 		}
 
-		upload(rsn, ids);
+		upload(rsn, ids, false);
 	}
 
-	private void collect(int containerId, Collection<Integer> into)
+	/**
+	 * The manual re-sync, for when the player can see that the site is wrong and changing their bank to force
+	 * an upload would be an absurd thing to have to do.
+	 *
+	 * It re-reads rather than trusting the memo, because the bank may well be open and a few withdrawals
+	 * further on than the last capture. The memo is the fallback, not the source.
+	 */
+	private void resync()
 	{
-		final ItemContainer container = client.getItemContainer(containerId);
+		if (!config.sync())
+		{
+			say("Syncing is turned off, so there is nothing to re-send.");
+			return;
+		}
+
+		String rsn = displayName();
+		final TreeSet<Integer> fresh = new TreeSet<>();
+		Set<Integer> ids = read(fresh) ? fresh : null;
+
+		if (ids == null)
+		{
+			ids = lastCaptured;
+			rsn = lastCapturedRsn;
+		}
+
+		if (ids == null || ids.isEmpty())
+		{
+			// Never silently do nothing: the player pressed a button and is owed an answer.
+			say("No bank seen yet this session, open one first.");
+			return;
+		}
+
+		lastCaptured = ids;
+		lastCapturedRsn = rsn;
+
+		// Deliberately skips the unchanged check. Re-sending an identical set is the entire point: the
+		// player is telling us they do not believe the server has it.
+		upload(rsn, ids, true);
+	}
+
+	/**
+	 * Fills {@code into} from the bank, worn equipment and inventory.
+	 *
+	 * Returns false when there is no bank container, and importantly does not fill anything in that case.
+	 * Worn equipment and the inventory are readable the moment you log in, so a read that quietly succeeded
+	 * with only those would let a manual re-sync replace a real bank with the thirty items the player happens
+	 * to be carrying.
+	 */
+	private boolean read(Collection<Integer> into)
+	{
+		final ItemContainer bank = client.getItemContainer(InventoryID.BANK);
+		if (bank == null)
+		{
+			return false;
+		}
+
+		collect(bank, into);
+
+		// Equipment and inventory are included alongside the bank because the question the site is asking is
+		// "what do you own", and a player's best items are usually the ones they are wearing. A bank-only
+		// read would tell the planner you do not own your own gear, which is the one thing it must not get
+		// wrong. It costs nothing: same trigger, same pass, same request.
+		collect(client.getItemContainer(InventoryID.WORN), into);
+		collect(client.getItemContainer(InventoryID.INV), into);
+
+		return !into.isEmpty();
+	}
+
+	private void collect(@Nullable ItemContainer container, Collection<Integer> into)
+	{
 		if (container == null)
 		{
 			return;
@@ -285,7 +386,7 @@ public class OsrsLoadoutPlugin extends Plugin
 	 * and a slow or unreachable server costs the player nothing. Nothing is retried here. The next bank is
 	 * the retry, and it arrives on its own.
 	 */
-	private void upload(@Nullable String rsn, Set<Integer> ids)
+	private void upload(@Nullable String rsn, Set<Integer> ids, boolean manual)
 	{
 		final Request request = new Request.Builder()
 			.url(LoadoutLink.UPLOAD_ENDPOINT)
@@ -297,9 +398,8 @@ public class OsrsLoadoutPlugin extends Plugin
 			@Override
 			public void onFailure(Call call, IOException e)
 			{
-				// Offline, or the server is down. Silent by design: a chat line every time someone banks
-				// without a connection is worse than not syncing.
 				log.debug("Bank upload failed", e);
+				failed(manual);
 			}
 
 			@Override
@@ -310,28 +410,47 @@ public class OsrsLoadoutPlugin extends Plugin
 					if (!r.isSuccessful())
 					{
 						log.debug("Bank upload rejected with {}", r.code());
+						failed(manual);
 						return;
 					}
 
 					lastSent = ids;
 					lastSentRsn = rsn;
-					onUploaded(rsn, ids.size());
+					onUploaded(rsn, ids.size(), manual);
 				}
 			}
 		});
 	}
 
 	/**
+	 * Silence is right for an upload nobody asked for - a chat line every time someone banks without a
+	 * connection is worse than not syncing - but wrong for one they pressed a button for.
+	 */
+	private void failed(boolean manual)
+	{
+		if (manual)
+		{
+			say("Could not reach osrsloadout.com. It will try again next time you open a bank.");
+		}
+	}
+
+	/**
 	 * On an OkHttp dispatcher thread. The bank is up; the only question left is whether the player still
 	 * needs to be told how to let a browser read it.
 	 */
-	private void onUploaded(@Nullable String rsn, int count)
+	private void onUploaded(@Nullable String rsn, int count, boolean manual)
 	{
 		if (!linked())
 		{
-			// The code and the item count belong on one line, so the count is carried into the pairing call
-			// rather than announced ahead of it.
+			// A code is more use than a confirmation, and the count rides along on the same line, so this
+			// takes precedence over the manual wording.
 			requestCode(rsn, count);
+			return;
+		}
+
+		if (manual)
+		{
+			say("Re-sent " + count + " items.");
 			return;
 		}
 
@@ -344,7 +463,8 @@ public class OsrsLoadoutPlugin extends Plugin
 
 	/**
 	 * Mints a single-use code the player types into the website, which is how a browser is granted the right
-	 * to read this bank. Ten minutes, one use, and asking again replaces any unused code.
+	 * to read this bank. Ten minutes, one use, and asking again retires any unused code, so only one door is
+	 * ever open.
 	 *
 	 * @param count items just uploaded, so the code and the count can share one chat line, or
 	 *              {@link #ON_REQUEST} when the player asked for a code outright and there is no count to
@@ -413,11 +533,35 @@ public class OsrsLoadoutPlugin extends Plugin
 	 */
 	private void announceWithoutCode(int count)
 	{
-		if (count != ON_REQUEST && !announced)
+		if (count == ON_REQUEST)
+		{
+			say("Could not reach osrsloadout.com for a link code. Try again in a moment.");
+			return;
+		}
+
+		if (!announced)
 		{
 			announced = true;
 			say("Synced " + count + " items.");
 		}
+	}
+
+	/**
+	 * The real revoke. Unlinking inside the website only makes that browser forget the id it holds; the id
+	 * itself keeps working for anyone who has it. Rotating the secret moves the bank to a different address
+	 * altogether, so every id handed out against the old one stops resolving at once.
+	 */
+	private void rotateKey()
+	{
+		configManager.unsetConfiguration(CONFIG_GROUP, SECRET_KEY);
+		configManager.unsetConfiguration(CONFIG_GROUP, LINKED_KEY);
+
+		// The new address holds nothing, so the memo of what the old one already had would otherwise suppress
+		// the very upload that fills it.
+		forgetUploads();
+
+		say("Sync key reset. Every linked browser is now unlinked. Open a bank, or use \"Re-sync my bank "
+			+ "now\", to upload again and get a fresh code.");
 	}
 
 	/**
@@ -433,8 +577,10 @@ public class OsrsLoadoutPlugin extends Plugin
 			return existing;
 		}
 
-		// randomUUID is seeded from SecureRandom, which is what matters for a value that is the sole
-		// credential here; the hyphens are dropped only so that what is stored is a plain 32-character token.
+		// UUID.randomUUID is specified to use a cryptographically strong pseudo random number generator,
+		// which is java.security.SecureRandom. That matters more than the format for a value that is the sole
+		// credential in this system: it carries 122 random bits, and the hyphens are dropped only so that
+		// what is stored is a plain 32-character token.
 		final String generated = UUID.randomUUID().toString().replace("-", "");
 		configManager.setConfiguration(CONFIG_GROUP, SECRET_KEY, generated);
 		return generated;
@@ -458,7 +604,7 @@ public class OsrsLoadoutPlugin extends Plugin
 		return a == null ? b == null : a.equals(b);
 	}
 
-	private void forgetSession()
+	private void forgetUploads()
 	{
 		lastSent = null;
 		lastSentRsn = null;
