@@ -257,14 +257,25 @@ class OsrsLoadoutPanel extends PluginPanel
 		});
 	}
 
-	/** A wrapped text area's height depends on its text, so it has to be re-measured when the text moves. */
+	/**
+	 * A wrapped text area's height depends on its text, so it has to be re-measured when the text moves.
+	 *
+	 * The clearing step is the whole trick. getPreferredSize() returns the value set by setPreferredSize()
+	 * if there is one, rather than asking the UI delegate to lay the text out again - so measuring after
+	 * having set it just reads back the previous answer, and every area stays at the height it happened to
+	 * have the first time. codeHint starts empty and hidden, which is one line, so "Type at
+	 * osrsloadout.com. Ten minutes, one use." was clipped to "Ten" forever after.
+	 */
 	private void resize()
 	{
 		for (JTextArea a : wraps)
 		{
+			a.setPreferredSize(null);
+			a.setMaximumSize(null);
 			a.setSize(INNER, Short.MAX_VALUE);
-			a.setPreferredSize(new Dimension(INNER, a.getPreferredSize().height));
-			a.setMaximumSize(new Dimension(INNER, a.getPreferredSize().height));
+			final int h = a.getPreferredSize().height;
+			a.setPreferredSize(new Dimension(INNER, h));
+			a.setMaximumSize(new Dimension(INNER, h));
 		}
 		revalidate();
 		repaint();

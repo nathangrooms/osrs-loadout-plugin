@@ -353,7 +353,11 @@ public class OsrsLoadoutPlugin extends Plugin
 			return;
 		}
 
-		String rsn = displayName();
+		// labelName(), never displayName(): this is a request that leaves the client, so it is subject to
+		// the name opt-in exactly like the other two. Calling displayName() directly here sent the
+		// character name on every manual sync regardless of the setting, which is precisely the thing the
+		// setting exists to prevent, and made the plugin's own description untrue.
+		String rsn = labelName();
 		final TreeMap<Integer, Long> fresh = new TreeMap<>();
 		SortedMap<Integer, Long> items = read(fresh) ? fresh : null;
 
