@@ -25,7 +25,7 @@ the bank closed.
 
 ## What is uploaded
 
-On each press of Sync, to `https://yqdqbsbgowqjkjplkrzi.supabase.co/functions/v1/bank`:
+On each press of Sync, to `https://www.osrsloadout.com/api/v1/bank`:
 
 - the distinct item ids in your bank, worn equipment and inventory
 - how many of each you have
@@ -34,7 +34,7 @@ On each press of Sync, to `https://yqdqbsbgowqjkjplkrzi.supabase.co/functions/v1
   by default
 
 Requesting a link code additionally POSTs the random key (and the display name, under the same opt-in) to
-`.../functions/v1/bank/pair`, which returns the code.
+`https://www.osrsloadout.com/api/v1/bank/pair`, which returns the code.
 
 With *Sync* off the plugin makes no requests at all — not the upload, not the pairing call.
 

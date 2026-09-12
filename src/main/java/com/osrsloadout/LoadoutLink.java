@@ -44,7 +44,13 @@ import javax.annotation.Nullable;
  */
 final class LoadoutLink
 {
-	static final String UPLOAD_ENDPOINT = "https://yqdqbsbgowqjkjplkrzi.supabase.co/functions/v1/bank";
+	/**
+	 * Our own domain rather than the host that happens to be behind it today. The address is
+	 * compiled into every copy of this plugin and changing it takes a Plugin Hub review, so pointing
+	 * it straight at a provider would mean that provider's outage, rate limit or migration breaks
+	 * every install with no quick way to fix it. A domain we control makes that a DNS change.
+	 */
+	static final String UPLOAD_ENDPOINT = "https://www.osrsloadout.com/api/v1/bank";
 	static final String PAIR_ENDPOINT = UPLOAD_ENDPOINT + "/pair";
 
 	private LoadoutLink()
