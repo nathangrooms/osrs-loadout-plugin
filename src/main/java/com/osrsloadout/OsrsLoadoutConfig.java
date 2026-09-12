@@ -52,13 +52,14 @@ public interface OsrsLoadoutConfig extends Config
 	@ConfigItem(
 		keyName = "sync",
 		name = "Sync my bank to osrsloadout.com",
-		description = "Uploads the item ids in your bank, worn equipment and inventory to osrsloadout.com "
-			+ "every time you open a bank, along with how many of each you have and your character's "
-			+ "display name as a label. Levels, location and chat are never sent. Your bank is stored under "
-			+ "a key that only this RuneLite install holds, so it can only be read by a browser you have "
-			+ "linked with a code. Turn this off to stop uploading."
-			+ "<br><br>The link code, the sync button and the rest are in the OSRS Loadout panel, on the "
-			+ "toolbar to the right.",
+		description = "Lets this plugin talk to osrsloadout.com. With it on, pressing 'Sync my bank now' "
+			+ "in the OSRS Loadout panel uploads every item id and quantity in your bank, worn equipment "
+			+ "and inventory, your character's display name as a label, and a random key this plugin "
+			+ "generated. Levels, location and chat are never sent. Nothing is uploaded until you press "
+			+ "that button. Turn this off and the plugin makes no requests at all.",
+		warning = "This feature submits your IP address to a 3rd-party server not controlled or verified "
+			+ "by RuneLite developers, along with the contents of your bank and your character's display "
+			+ "name.",
 		position = 1
 	)
 	default boolean sync()

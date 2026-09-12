@@ -26,7 +26,11 @@ package com.osrsloadout;
 
 import com.google.gson.Gson;
 import com.google.inject.Provides;
+import java.awt.image.BufferedImage;
 import java.io.IOException;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.Map;
 import java.util.SortedMap;
 import java.util.TreeMap;
@@ -38,9 +42,6 @@ import net.runelite.api.ChatMessageType;
 import net.runelite.api.Client;
 import net.runelite.api.GameState;
 import net.runelite.api.Item;
-import java.awt.image.BufferedImage;
-import java.time.ZoneId;
-import java.time.format.DateTimeFormatter;
 import net.runelite.api.ItemComposition;
 import net.runelite.api.ItemContainer;
 import net.runelite.api.Player;
@@ -57,6 +58,9 @@ import net.runelite.client.chat.ChatMessageBuilder;
 import net.runelite.client.chat.ChatMessageManager;
 import net.runelite.client.chat.QueuedMessage;
 import net.runelite.client.config.ConfigManager;
+import net.runelite.client.ui.ClientToolbar;
+import net.runelite.client.ui.NavigationButton;
+import net.runelite.client.util.ImageUtil;
 import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.events.ConfigChanged;
 import net.runelite.client.game.ItemManager;
@@ -82,6 +86,8 @@ import okhttp3.ResponseBody;
 public class OsrsLoadoutPlugin extends Plugin
 {
 	static final String CONFIG_GROUP = "osrsloadout";
+	private static final DateTimeFormatter CLOCK = DateTimeFormatter.ofPattern("HH:mm")
+		.withZone(ZoneId.systemDefault());
 
 	/**
 	 * Neither of these is a @ConfigItem. Keeping them out of the config interface keeps them out of the
@@ -122,7 +128,7 @@ public class OsrsLoadoutPlugin extends Plugin
 	private Gson gson;
 
 	@Inject
-	private net.runelite.client.ui.ClientToolbar clientToolbar;
+	private ClientToolbar clientToolbar;
 
 	/**
 	 * Set when the bank interface loads, cleared once we have read it. This is the whole debounce: the bank
@@ -139,22 +145,14 @@ public class OsrsLoadoutPlugin extends Plugin
 	private SortedMap<Integer, Long> lastCaptured;
 	private String lastCapturedRsn;
 
-	/**
-	 * The last reading the server accepted. A hash would do, but the map itself is a few kilobytes for a full
-	 * bank and comparing it is exact, so there is no reason to introduce a collision that would present as
-	 * the plugin silently refusing to sync. Comparing quantities as well as ids is what makes selling half a
-	 * stack of logs count as a change.
-	 */
-	private SortedMap<Integer, Long> lastSent;
-	private String lastSentRsn;
-
-	private boolean announced;
+	/** These four are written on OkHttp dispatcher threads and read on the client thread and the EDT. */
+	private volatile boolean announced;
 
 	private OsrsLoadoutPanel panel;
-	private net.runelite.client.ui.NavigationButton navButton;
+	private NavigationButton navButton;
 	/** What the last successful read found, for the panel to report rather than the player to guess. */
-	private String lastSyncAt;
-	private int lastSyncItems;
+	private volatile String lastSyncAt;
+	private volatile int lastSyncItems;
 
 	@Provides
 	OsrsLoadoutConfig provideConfig(ConfigManager configManager)
@@ -187,7 +185,7 @@ public class OsrsLoadoutPlugin extends Plugin
 				rotateKey();
 			}
 		});
-		navButton = net.runelite.client.ui.NavigationButton.builder()
+		navButton = NavigationButton.builder()
 			.tooltip("OSRS Loadout")
 			.icon(icon())
 			.priority(7)
@@ -199,7 +197,7 @@ public class OsrsLoadoutPlugin extends Plugin
 
 	private BufferedImage icon()
 	{
-		return net.runelite.client.util.ImageUtil.loadImageResource(getClass(), "icon.png");
+		return ImageUtil.loadImageResource(getClass(), "icon.png");
 	}
 
 	/** Everything the panel shows, in one place, so no caller has to remember which parts to update. */
@@ -408,10 +406,8 @@ public class OsrsLoadoutPlugin extends Plugin
 	}
 
 	/**
-	 * How the last read broke down: bank, worn, inventory, and entries skipped because they were empty
-	 * slots or placeholders. Kept because "is it picking up placeholders?" is a question about this
-	 * plugin that nobody - including whoever wrote it - can answer by reading the code with confidence,
-	 * and one line of counts settles it in one bank open.
+	 * Bank, worn, inventory, skipped: what the last read found. Kept because "is it counting
+	 * placeholders?" is a question one line of counts settles and an argument otherwise.
 	 */
 	private int[] lastBreakdown = new int[4];
 
@@ -469,10 +465,8 @@ public class OsrsLoadoutPlugin extends Plugin
 	}
 
 	/**
-	 * Where the last reading came from, in one line. A placeholder is a bank slot holding an item you no
-	 * longer have, stored with a quantity of zero, and it is the first thing anybody suspects when the
-	 * site shows gear they do not own - so the count of what was skipped is said out loud rather than
-	 * left to be argued about.
+	 * Where the last reading came from, in one line. Placeholders are the first thing anybody suspects
+	 * when the site shows gear they do not own, so the skipped count is said out loud.
 	 */
 	private String breakdown()
 	{
@@ -514,11 +508,8 @@ public class OsrsLoadoutPlugin extends Plugin
 						return;
 					}
 
-					lastSent = items;
-					lastSentRsn = rsn;
 					lastSyncItems = items.size();
-					lastSyncAt = DateTimeFormatter.ofPattern("HH:mm")
-						.withZone(ZoneId.systemDefault()).format(java.time.Instant.now());
+					lastSyncAt = CLOCK.format(Instant.now());
 					refreshPanel();
 					onUploaded(rsn, items.size(), manual);
 				}
@@ -534,7 +525,7 @@ public class OsrsLoadoutPlugin extends Plugin
 	{
 		if (manual)
 		{
-			say("Could not reach osrsloadout.com. It will try again next time you open a bank.");
+			say("Could not reach osrsloadout.com. Press Sync again in a moment.");
 		}
 	}
 
@@ -576,6 +567,14 @@ public class OsrsLoadoutPlugin extends Plugin
 	 */
 	private void requestCode(@Nullable String rsn, int count)
 	{
+		// Gated like every other request. The toggle is the plugin's disclosure of talking to a third
+		// party at all, so leaving one endpoint reachable with it off would make that disclosure false.
+		if (!config.sync())
+		{
+			say("Syncing is turned off, so there is no bank to link to.");
+			return;
+		}
+
 		final Request request = new Request.Builder()
 			.url(LoadoutLink.PAIR_ENDPOINT)
 			.post(RequestBody.create(JSON, LoadoutLink.pairJson(gson, rsn, secret())))
@@ -623,9 +622,8 @@ public class OsrsLoadoutPlugin extends Plugin
 				final String tail = "Type " + code + " at osrsloadout.com to link this browser.";
 				say(count == ON_REQUEST ? tail : "Synced " + count + " items. " + tail);
 
-				// And in the panel, because a chat line scrolls away while you are finding the website and
-				// there is nowhere else in RuneLite to read it back. Config items are the only thing a
-				// plugin can put in that panel, so the code is one: a text field you can select and copy.
+				// Stored as well as said, because a chat line scrolls away while you are finding the
+				// website. The panel reads it back out of config, so it survives a client restart.
 				configManager.setConfiguration(CONFIG_GROUP, LINK_CODE_KEY, code);
 				refreshPanel();
 
@@ -663,6 +661,12 @@ public class OsrsLoadoutPlugin extends Plugin
 	 */
 	private void rotateKey()
 	{
+		if (!config.sync())
+		{
+			say("Syncing is turned off, so there is no key in use to reset.");
+			return;
+		}
+
 		configManager.unsetConfiguration(CONFIG_GROUP, SECRET_KEY);
 		configManager.unsetConfiguration(CONFIG_GROUP, LINKED_KEY);
 		configManager.unsetConfiguration(CONFIG_GROUP, LINK_CODE_KEY);
@@ -724,15 +728,9 @@ public class OsrsLoadoutPlugin extends Plugin
 		return name == null || name.isEmpty() ? null : name;
 	}
 
-	private static boolean equal(@Nullable String a, @Nullable String b)
-	{
-		return a == null ? b == null : a.equals(b);
-	}
 
 	private void forgetUploads()
 	{
-		lastSent = null;
-		lastSentRsn = null;
 		announced = false;
 	}
 
