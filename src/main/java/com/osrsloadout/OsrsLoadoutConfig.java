@@ -50,10 +50,10 @@ public interface OsrsLoadoutConfig extends Config
 		keyName = "sync",
 		name = "Sync my bank to osrsloadout.com",
 		description = "Uploads the item ids in your bank, worn equipment and inventory to osrsloadout.com "
-			+ "every time you open a bank, along with your character's display name as a label. Quantities, "
-			+ "levels, location and chat are never sent. Your bank is stored under a key that only this "
-			+ "RuneLite install holds, so it can only be read by a browser you have linked with a code. "
-			+ "Turn this off to stop uploading.",
+			+ "every time you open a bank, along with how many of each you have and your character's "
+			+ "display name as a label. Levels, location and chat are never sent. Your bank is stored under "
+			+ "a key that only this RuneLite install holds, so it can only be read by a browser you have "
+			+ "linked with a code. Turn this off to stop uploading.",
 		position = 1
 	)
 	default boolean sync()

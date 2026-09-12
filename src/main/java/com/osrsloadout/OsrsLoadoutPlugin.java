@@ -27,9 +27,9 @@ package com.osrsloadout;
 import com.google.gson.Gson;
 import com.google.inject.Provides;
 import java.io.IOException;
-import java.util.Collection;
-import java.util.Set;
-import java.util.TreeSet;
+import java.util.Map;
+import java.util.SortedMap;
+import java.util.TreeMap;
 import java.util.UUID;
 import javax.annotation.Nullable;
 import javax.inject.Inject;
@@ -123,19 +123,20 @@ public class OsrsLoadoutPlugin extends Plugin
 	private boolean pendingCapture;
 
 	/**
-	 * The most recent set read out of a bank, whether or not the upload that followed it succeeded. This is
-	 * what a manual re-sync falls back on when no bank is open, and it is deliberately separate from
-	 * lastSent: an upload that failed still leaves us something to re-send.
+	 * The most recent reading of a bank, whether or not the upload that followed it succeeded. This is what a
+	 * manual re-sync falls back on when no bank is open, and it is deliberately separate from lastSent: an
+	 * upload that failed still leaves us something to re-send.
 	 */
-	private Set<Integer> lastCaptured;
+	private SortedMap<Integer, Long> lastCaptured;
 	private String lastCapturedRsn;
 
 	/**
-	 * The last set the server accepted. A hash would do, but the set itself is about four kilobytes for a
-	 * full bank and comparing it is exact, so there is no reason to introduce a collision that would present
-	 * as the plugin silently refusing to sync.
+	 * The last reading the server accepted. A hash would do, but the map itself is a few kilobytes for a full
+	 * bank and comparing it is exact, so there is no reason to introduce a collision that would present as
+	 * the plugin silently refusing to sync. Comparing quantities as well as ids is what makes selling half a
+	 * stack of logs count as a change.
 	 */
-	private Set<Integer> lastSent;
+	private SortedMap<Integer, Long> lastSent;
 	private String lastSentRsn;
 
 	private boolean announced;
@@ -269,22 +270,23 @@ public class OsrsLoadoutPlugin extends Plugin
 		}
 
 		final String rsn = displayName();
-		final TreeSet<Integer> ids = new TreeSet<>();
-		if (!read(ids))
+		final TreeMap<Integer, Long> items = new TreeMap<>();
+		if (!read(items))
 		{
 			return;
 		}
 
-		lastCaptured = ids;
+		lastCaptured = items;
 		lastCapturedRsn = rsn;
 
-		if (ids.equals(lastSent) && equal(rsn, lastSentRsn))
+		if (items.equals(lastSent) && equal(rsn, lastSentRsn))
 		{
-			// Idly reopening the bank is not a request.
+			// Idly reopening the bank is not a request. Map equality covers quantities too, so spending half
+			// a stack does count as a change even though the set of ids has not moved.
 			return;
 		}
 
-		upload(rsn, ids, false);
+		upload(rsn, items, false);
 	}
 
 	/**
@@ -303,28 +305,28 @@ public class OsrsLoadoutPlugin extends Plugin
 		}
 
 		String rsn = displayName();
-		final TreeSet<Integer> fresh = new TreeSet<>();
-		Set<Integer> ids = read(fresh) ? fresh : null;
+		final TreeMap<Integer, Long> fresh = new TreeMap<>();
+		SortedMap<Integer, Long> items = read(fresh) ? fresh : null;
 
-		if (ids == null)
+		if (items == null)
 		{
-			ids = lastCaptured;
+			items = lastCaptured;
 			rsn = lastCapturedRsn;
 		}
 
-		if (ids == null || ids.isEmpty())
+		if (items == null || items.isEmpty())
 		{
 			// Never silently do nothing: the player pressed a button and is owed an answer.
 			say("No bank seen yet this session, open one first.");
 			return;
 		}
 
-		lastCaptured = ids;
+		lastCaptured = items;
 		lastCapturedRsn = rsn;
 
-		// Deliberately skips the unchanged check. Re-sending an identical set is the entire point: the
+		// Deliberately skips the unchanged check. Re-sending an identical reading is the entire point: the
 		// player is telling us they do not believe the server has it.
-		upload(rsn, ids, true);
+		upload(rsn, items, true);
 	}
 
 	/**
@@ -335,7 +337,7 @@ public class OsrsLoadoutPlugin extends Plugin
 	 * with only those would let a manual re-sync replace a real bank with the thirty items the player happens
 	 * to be carrying.
 	 */
-	private boolean read(Collection<Integer> into)
+	private boolean read(Map<Integer, Long> into)
 	{
 		final ItemContainer bank = client.getItemContainer(InventoryID.BANK);
 		if (bank == null)
@@ -355,7 +357,7 @@ public class OsrsLoadoutPlugin extends Plugin
 		return !into.isEmpty();
 	}
 
-	private void collect(@Nullable ItemContainer container, Collection<Integer> into)
+	private void collect(@Nullable ItemContainer container, Map<Integer, Long> into)
 	{
 		if (container == null)
 		{
@@ -365,11 +367,12 @@ public class OsrsLoadoutPlugin extends Plugin
 		for (Item item : container.getItems())
 		{
 			final int id = item.getId();
+			final int quantity = item.getQuantity();
 
 			// A placeholder is stored in the bank as the item with a quantity of zero. The player does not
 			// own it, so sending it would make the planner claim gear they have already spent. Filtering on
 			// quantity catches this and the empty slots the container reports, in one condition.
-			if (id <= 0 || item.getQuantity() <= 0 || id == ItemID.BANK_FILLER)
+			if (id <= 0 || quantity <= 0 || id == ItemID.BANK_FILLER)
 			{
 				continue;
 			}
@@ -377,7 +380,14 @@ public class OsrsLoadoutPlugin extends Plugin
 			// canonicalize resolves a noted id to its unnoted one, a placeholder to the real item, and the
 			// "worn" variants some equipment has to the base id. Doing this by hand via getNote() and
 			// getLinkedNoteId() would reimplement it and still miss the last case.
-			into.add(itemManager.canonicalize(id));
+			final int canonical = itemManager.canonicalize(id);
+
+			// Summed rather than replaced, because the site is being asked how much of a thing the player
+			// owns in total and one id genuinely occurs in several places at once: runes part-carried and
+			// part-banked, a stack of logs in the inventory on top of the pile in the bank, noted and unnoted
+			// copies of the same item that canonicalize has just folded together. Taking one container's
+			// figure would under-report every one of those.
+			into.merge(canonical, (long) quantity, Long::sum);
 		}
 	}
 
@@ -386,11 +396,11 @@ public class OsrsLoadoutPlugin extends Plugin
 	 * and a slow or unreachable server costs the player nothing. Nothing is retried here. The next bank is
 	 * the retry, and it arrives on its own.
 	 */
-	private void upload(@Nullable String rsn, Set<Integer> ids, boolean manual)
+	private void upload(@Nullable String rsn, SortedMap<Integer, Long> items, boolean manual)
 	{
 		final Request request = new Request.Builder()
 			.url(LoadoutLink.UPLOAD_ENDPOINT)
-			.post(RequestBody.create(JSON, LoadoutLink.uploadJson(gson, rsn, ids, secret())))
+			.post(RequestBody.create(JSON, LoadoutLink.uploadJson(gson, rsn, items, secret())))
 			.build();
 
 		okHttpClient.newCall(request).enqueue(new Callback()
@@ -414,9 +424,9 @@ public class OsrsLoadoutPlugin extends Plugin
 						return;
 					}
 
-					lastSent = ids;
+					lastSent = items;
 					lastSentRsn = rsn;
-					onUploaded(rsn, ids.size(), manual);
+					onUploaded(rsn, items.size(), manual);
 				}
 			}
 		});

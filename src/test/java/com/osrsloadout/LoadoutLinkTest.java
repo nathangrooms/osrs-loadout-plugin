@@ -25,9 +25,7 @@
 package com.osrsloadout;
 
 import com.google.gson.Gson;
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.TreeSet;
+import java.util.TreeMap;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
@@ -43,11 +41,23 @@ public class LoadoutLinkTest
 {
 	private final Gson gson = new Gson();
 
+	private static TreeMap<Integer, Long> items(long... idsThenQuantities)
+	{
+		final TreeMap<Integer, Long> map = new TreeMap<>();
+		for (int i = 0; i < idsThenQuantities.length; i += 2)
+		{
+			map.put((int) idsThenQuantities[i], idsThenQuantities[i + 1]);
+		}
+		return map;
+	}
+
 	@Test
 	public void serialisesTheAgreedUploadFields()
 	{
-		final String json = LoadoutLink.uploadJson(gson, "Zezima", new TreeSet<>(Arrays.asList(4151, 11834, 12002)), "abc123");
-		assertEquals("{\"rsn\":\"Zezima\",\"ids\":[4151,11834,12002],\"secret\":\"abc123\"}", json);
+		final String json = LoadoutLink.uploadJson(gson, "AvantoeKush",
+			items(453, 2400, 536, 180, 1515, 5000, 4151, 1), "abc123");
+		assertEquals("{\"rsn\":\"AvantoeKush\",\"ids\":[453,536,1515,4151],"
+			+ "\"qty\":[2400,180,5000,1],\"secret\":\"abc123\"}", json);
 	}
 
 	@Test
@@ -57,12 +67,28 @@ public class LoadoutLinkTest
 	}
 
 	@Test
-	public void sendsIdsAscending()
+	public void keepsQuantitiesAlignedWithIdsInAscendingOrder()
 	{
-		// The server sorts and de-duplicates anyway, but sending a canonical list is what lets the plugin
-		// compare one capture against the last and skip a request that would change nothing.
-		final String json = LoadoutLink.uploadJson(gson, "Zezima", new TreeSet<>(Arrays.asList(12002, 4151, 4151, 11834)), "k");
+		// The arrays are positional: qty[i] belongs to ids[i]. Insertion order here is deliberately not key
+		// order, because a drift between the two would silently reassign every quantity to the wrong item -
+		// the one failure in this class that would produce plausible-looking nonsense rather than an error.
+		final TreeMap<Integer, Long> map = new TreeMap<>();
+		map.put(12002, 7L);
+		map.put(4151, 1L);
+		map.put(11834, 3L);
+
+		final String json = LoadoutLink.uploadJson(gson, "Zezima", map, "k");
 		assertTrue(json, json.contains("\"ids\":[4151,11834,12002]"));
+		assertTrue(json, json.contains("\"qty\":[1,3,7]"));
+	}
+
+	@Test
+	public void saturatesRatherThanWrappingAnOversizedStack()
+	{
+		// Summing one id across containers is done in a long. Narrowing it to the wire's int must clamp: a
+		// wrapped total would arrive negative and be read as nonsense.
+		final String json = LoadoutLink.uploadJson(gson, "Zezima", items(995, 5_000_000_000L), "k");
+		assertTrue(json, json.contains("\"qty\":[" + Integer.MAX_VALUE + "]"));
 	}
 
 	@Test
@@ -70,7 +96,7 @@ public class LoadoutLinkTest
 	{
 		// The display name is a label, not a key, so it has to be genuinely optional rather than sent as the
 		// string "null" when nobody is logged in.
-		final String json = LoadoutLink.uploadJson(gson, null, Collections.singleton(995), "k");
+		final String json = LoadoutLink.uploadJson(gson, null, items(995, 12), "k");
 		assertFalse(json, json.contains("rsn"));
 		assertTrue(json, json.contains("\"secret\":\"k\""));
 	}
@@ -80,7 +106,7 @@ public class LoadoutLinkTest
 	{
 		// A display name arrives from the game, not from us. Gson is here so that a name carrying a quote or
 		// a backslash produces valid JSON rather than a request nobody can reproduce.
-		final String json = LoadoutLink.uploadJson(gson, "a\"b\\c", Collections.singleton(995), "k");
+		final String json = LoadoutLink.uploadJson(gson, "a\"b\\c", items(995, 1), "k");
 		assertTrue(json, json.contains("\"rsn\":\"a\\\"b\\\\c\""));
 	}
 

@@ -26,7 +26,8 @@ package com.osrsloadout;
 
 import com.google.gson.Gson;
 import com.google.gson.JsonSyntaxException;
-import java.util.Collection;
+import java.util.Map;
+import java.util.SortedMap;
 import javax.annotation.Nullable;
 
 /**
@@ -55,9 +56,9 @@ final class LoadoutLink
 	 * from the game, it can contain a non-breaking space, and hand-built JSON is how a stray quote turns into
 	 * a malformed request nobody can reproduce.
 	 */
-	static String uploadJson(Gson gson, @Nullable String rsn, Collection<Integer> ids, String secret)
+	static String uploadJson(Gson gson, @Nullable String rsn, SortedMap<Integer, Long> items, String secret)
 	{
-		return gson.toJson(new Upload(rsn, ids, secret));
+		return gson.toJson(new Upload(rsn, items, secret));
 	}
 
 	static String pairJson(Gson gson, @Nullable String rsn, String secret)
@@ -97,18 +98,32 @@ final class LoadoutLink
 	{
 		private final String rsn;
 		private final int[] ids;
+		private final int[] qty;
 		private final String secret;
 
-		private Upload(@Nullable String rsn, Collection<Integer> ids, String secret)
+		/**
+		 * The two arrays are parallel and share the map's ascending key order, which is the contract the
+		 * server reads them under. They are built in one pass precisely so they cannot drift apart.
+		 *
+		 * Quantities arrive as longs because summing an item that appears in several containers can in
+		 * principle exceed an int, and are saturated here rather than allowed to wrap: a wrapped total would
+		 * arrive as a negative number and be read as nonsense, whereas a saturated one is merely the largest
+		 * amount the wire can express.
+		 */
+		private Upload(@Nullable String rsn, SortedMap<Integer, Long> items, String secret)
 		{
 			this.rsn = rsn;
 			this.secret = secret;
-			this.ids = new int[ids.size()];
+			this.ids = new int[items.size()];
+			this.qty = new int[items.size()];
 
 			int i = 0;
-			for (int id : ids)
+			for (Map.Entry<Integer, Long> entry : items.entrySet())
 			{
-				this.ids[i++] = id;
+				final long amount = entry.getValue();
+				this.ids[i] = entry.getKey();
+				this.qty[i] = amount > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) amount;
+				i++;
 			}
 		}
 	}

@@ -29,10 +29,16 @@ asked to do.
 sends:
 
 - the list of distinct item ids in your bank, worn equipment and inventory,
+- how many of each you have,
 - a random key generated once on this install,
 - your character's display name, as a label so the site has something to show next to the bank.
 
-It does **not** send quantities, levels, location, chat, or anything about any other character.
+It does **not** send levels, location, chat, or anything about any other character.
+
+Quantities are there so the site can tell five thousand yew logs from one. Without them every row looks the
+same size, and the difference is most of what makes a pile of loot worth selling to fund an upgrade. What
+counts as loot, as a supply, or as gear you should keep is decided entirely on the site — the plugin reports
+what is in the bank and expresses no opinion about any of it.
 
 The destination is a Supabase project run by the owner of osrsloadout.com:
 
@@ -115,9 +121,20 @@ not own your own gear, which is the one thing it must not get wrong. It costs no
 pass, same request — and the server takes a list of ids without caring where they came from. Reverting it is
 deleting two lines in `capture()`.
 
-**The change check keeps the id set, not a hash of it.** A full bank is about four kilobytes of `Integer`,
-comparing it is exact, and a hash would introduce a collision that presents as the plugin silently refusing
-to sync — a bug nobody would ever diagnose from inside the game.
+**The change check keeps the reading itself, not a hash of it.** A full bank is a few kilobytes of boxed
+numbers, comparing it is exact, and a hash would introduce a collision that presents as the plugin silently
+refusing to sync — a bug nobody would ever diagnose from inside the game. It compares quantities as well as
+ids, because otherwise selling half a stack of logs would never reach the site: the row is still there, and
+only the number moved.
+
+**An item found in more than one place has its quantities summed.** Runes part-carried and part-banked, a
+stack of logs in the inventory on top of the pile in the bank, noted and unnoted copies that `canonicalize`
+has just folded into one id — all of these are genuinely one holding split across containers. Taking a single
+container's figure would under-report every one of them.
+
+**The sum is accumulated in a `long` and clamped to `Integer.MAX_VALUE` on the way out.** No real bank gets
+close, but a wrapped total would arrive at the server as a negative number and be read as nonsense, whereas a
+clamped one is merely the largest amount the wire can express.
 
 **The "linked" flag is only set once a code has actually reached the player.** Setting it when the pairing
 request was merely sent would burn their one prompt on a failure they never saw, leaving them with a synced
