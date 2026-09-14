@@ -31,25 +31,11 @@ import java.util.SortedMap;
 import javax.annotation.Nullable;
 
 /**
- * Everything about the link between this install and osrsloadout.com: the two endpoints it calls and the
- * shape of what goes over them.
- *
- * Kept separate from the plugin, and free of RuneLite types, because the request bodies are the part worth
- * testing and a JSON shape can be asserted without a game client.
- *
- * The identity of a bank is the secret, and only the secret. The display name travels with it as a label so
- * the site has something to show, but it is not a lookup key and nothing here should ever treat it as one:
- * that is the whole difference between this design and the previous one, where knowing a character's name
- * was enough to read their bank.
+ * The two endpoints the plugin calls and the JSON it sends to them. Kept free of RuneLite types so the
+ * request bodies can be unit tested.
  */
 final class LoadoutLink
 {
-	/**
-	 * Our own domain rather than the host that happens to be behind it today. The address is
-	 * compiled into every copy of this plugin and changing it takes a Plugin Hub review, so pointing
-	 * it straight at a provider would mean that provider's outage, rate limit or migration breaks
-	 * every install with no quick way to fix it. A domain we control makes that a DNS change.
-	 */
 	static final String UPLOAD_ENDPOINT = "https://www.osrsloadout.com/api/v1/bank";
 	static final String PAIR_ENDPOINT = UPLOAD_ENDPOINT + "/pair";
 
@@ -57,38 +43,24 @@ final class LoadoutLink
 	{
 	}
 
-	/**
-	 * Gson rather than string concatenation because a display name is attacker-adjacent input: it arrives
-	 * from the game, it can contain a non-breaking space, and hand-built JSON is how a stray quote turns into
-	 * a malformed request nobody can reproduce.
-	 */
-	static String uploadJson(Gson gson, @Nullable String rsn, SortedMap<Integer, Long> items,
-		int[] slots, int[] tabs, String secret)
+	static String uploadJson(Gson gson, SortedMap<Integer, Long> items, int[] slots, int[] tabs, String secret)
 	{
-		return gson.toJson(new Upload(rsn, items, slots, tabs, secret));
+		return gson.toJson(new Upload(items, slots, tabs, secret));
 	}
 
-	static String pairJson(Gson gson, @Nullable String rsn, String secret)
+	static String pairJson(Gson gson, String secret)
 	{
-		return gson.toJson(new Pair(rsn, secret));
+		return gson.toJson(new Pair(secret));
 	}
 
-	/**
-	 * Returns the pairing code from a /bank/pair response, or null if the body is not what we expect. Null
-	 * rather than an exception because every caller's answer to a malformed response is the same as its
-	 * answer to a network failure: say nothing and let the next bank try again.
-	 */
+	/** The link code from a pair response, or null if the response is not usable. */
 	@Nullable
 	static String codeFrom(Gson gson, String body)
 	{
 		try
 		{
 			final PairResponse parsed = gson.fromJson(body, PairResponse.class);
-			if (parsed == null || parsed.code == null || parsed.code.isEmpty())
-			{
-				return null;
-			}
-			return parsed.code;
+			return parsed == null || parsed.code == null || parsed.code.isEmpty() ? null : parsed.code;
 		}
 		catch (JsonSyntaxException e)
 		{
@@ -96,53 +68,29 @@ final class LoadoutLink
 		}
 	}
 
-	/**
-	 * The field names are the wire contract; Gson takes them verbatim. Renaming one silently changes the
-	 * request, which is what the test on this class is guarding. A null rsn is omitted rather than sent as
-	 * null, which is what makes the label genuinely optional.
-	 */
 	private static final class Upload
 	{
-		private final String rsn;
+		/** Item ids in ascending order, and the quantity of each at the same index. */
 		private final int[] ids;
 		private final int[] qty;
-		/**
-		 * The bank as it is actually arranged: one id per slot in slot order, 0 for a square holding
-		 * nothing we report, and the sizes of the nine tabs. `ids`/`qty` answer what you own and merge
-		 * the same rune across bank, inventory and worn; these answer where it sits, which only the bank
-		 * has and which merging destroys. Both are omitted when empty, so a plugin that has not read a
-		 * bank sends neither and the server sees exactly what it used to.
-		 */
+		/** One id per bank slot (0 empty, negative a placeholder), and the nine tab sizes. Omitted when empty. */
 		private final int[] bank;
 		private final int[] tabs;
 		private final String secret;
 
-		/**
-		 * The two arrays are parallel and share the map's ascending key order, which is the contract the
-		 * server reads them under. They are built in one pass precisely so they cannot drift apart.
-		 *
-		 * Quantities arrive as longs because summing an item that appears in several containers can in
-		 * principle exceed an int, and are saturated here rather than allowed to wrap: a wrapped total would
-		 * arrive as a negative number and be read as nonsense, whereas a saturated one is merely the largest
-		 * amount the wire can express.
-		 */
-		private Upload(@Nullable String rsn, SortedMap<Integer, Long> items, int[] slots, int[] tabs,
-			String secret)
+		private Upload(SortedMap<Integer, Long> items, int[] slots, int[] tabs, String secret)
 		{
-			this.rsn = rsn;
-			this.secret = secret;
-			// Null rather than an empty array, so Gson leaves them out entirely: a reading taken before
-			// any bank was opened should send no arrangement at all, not an arrangement of nothing.
 			this.bank = slots != null && slots.length > 0 ? slots : null;
 			this.tabs = tabs != null && tabs.length > 0 ? tabs : null;
+			this.secret = secret;
 			this.ids = new int[items.size()];
 			this.qty = new int[items.size()];
-
 			int i = 0;
 			for (Map.Entry<Integer, Long> entry : items.entrySet())
 			{
 				final long amount = entry.getValue();
 				this.ids[i] = entry.getKey();
+				// quantities are summed across containers in a long; clamp rather than wrap
 				this.qty[i] = amount > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) amount;
 				i++;
 			}
@@ -151,17 +99,14 @@ final class LoadoutLink
 
 	private static final class Pair
 	{
-		private final String rsn;
 		private final String secret;
 
-		private Pair(@Nullable String rsn, String secret)
+		private Pair(String secret)
 		{
-			this.rsn = rsn;
 			this.secret = secret;
 		}
 	}
 
-	/** Only {@code code} is read; the server also returns expires_in, which the plugin has no use for. */
 	private static final class PairResponse
 	{
 		private String code;
